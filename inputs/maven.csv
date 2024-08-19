@@ -1,0 +1,361 @@
+full_repo_name,class_names,pr_title,labels,created_at,closed_at,commit_sha,commit_message,file_path,file_name,status,additions,deletions,patch
+apache/maven,MavenExecutionRequest | CliRequest | MavenCli | MavenCliTest,[MNG-8165] top/root/multimodule mixup,bug,2024-07-09T19:14:38Z,2024-07-10T08:22:11Z,b9da82c6b7c48b692ce3aec8839b81b07c1c42ac,"[MNG-8165] top/root/multimodule mixup
+
+This is a bug how in Maven different paths are
+detected and handled.
+
+Maven 4 is not affected.
+
+---
+
+https://issues.apache.org/jira/browse/MNG-8165",maven-embedder/src/main/java/org/apache/maven/cli/MavenCli.java,MavenCli.java,modified,32,21,"@@ -30,7 +30,6 @@
+ import java.nio.charset.Charset;
+ import java.nio.file.Files;
+ import java.nio.file.Path;
+-import java.nio.file.Paths;
+ import java.util.ArrayList;
+ import java.util.Collections;
+ import java.util.HashSet;
+@@ -320,7 +319,7 @@ void initialize(CliRequest cliRequest) throws ExitException {
+         // We need to locate the top level project which may be pointed at using
+         // the -f/--file option.  However, the command line isn't parsed yet, so
+         // we need to iterate through the args to find it and act upon it.
+-        Path topDirectory = Paths.get(cliRequest.workingDirectory);
++        Path topDirectory = cliRequest.multiModuleProjectDirectory.toPath();
+         boolean isAltFile = false;
+         for (String arg : cliRequest.args) {
+             if (isAltFile) {
+@@ -374,25 +373,28 @@ void cli(CliRequest cliRequest) throws Exception {
+         cliManager = new CLIManager();
+ 
+         CommandLine mavenConfig = null;
+-        try {
+-            File configFile = new File(cliRequest.multiModuleProjectDirectory, MVN_MAVEN_CONFIG);
+-
+-            if (configFile.isFile()) {
+-                try (Stream<String> lines = Files.lines(configFile.toPath(), Charset.defaultCharset())) {
+-                    String[] args = lines.filter(arg -> !arg.isEmpty() && !arg.startsWith(""#""))
+-                            .toArray(String[]::new);
+-                    mavenConfig = cliManager.parse(args);
+-                    List<?> unrecognized = mavenConfig.getArgList();
+-                    if (!unrecognized.isEmpty()) {
+-                        // This file can only contain options, not args (goals or phases)
+-                        throw new ParseException(""Unrecognized maven.config file entries: "" + unrecognized);
++        if (cliRequest.rootDirectory != null) {
++            try {
++                File configFile =
++                        cliRequest.rootDirectory.resolve(MVN_MAVEN_CONFIG).toFile();
++
++                if (configFile.isFile()) {
++                    try (Stream<String> lines = Files.lines(configFile.toPath(), Charset.defaultCharset())) {
++                        String[] args = lines.filter(arg -> !arg.isEmpty() && !arg.startsWith(""#""))
++                                .toArray(String[]::new);
++                        mavenConfig = cliManager.parse(args);
++                        List<?> unrecognized = mavenConfig.getArgList();
++                        if (!unrecognized.isEmpty()) {
++                            // This file can only contain options, not args (goals or phases)
++                            throw new ParseException(""Unrecognized maven.config file entries: "" + unrecognized);
++                        }
+                     }
+                 }
++            } catch (ParseException e) {
++                System.err.println(""Unable to parse maven.config file options: "" + e.getMessage());
++                cliManager.displayHelp(System.out);
++                throw e;
+             }
+-        } catch (ParseException e) {
+-            System.err.println(""Unable to parse maven.config file options: "" + e.getMessage());
+-            cliManager.displayHelp(System.out);
+-            throw e;
+         }
+ 
+         try {
+@@ -698,11 +700,12 @@ protected void configure() {
+ 
+     private List<CoreExtensionEntry> loadCoreExtensions(
+             CliRequest cliRequest, ClassRealm containerRealm, Set<String> providedArtifacts) throws Exception {
+-        if (cliRequest.multiModuleProjectDirectory == null) {
++        if (cliRequest.rootDirectory == null) {
+             return Collections.emptyList();
+         }
+ 
+-        File extensionsFile = new File(cliRequest.multiModuleProjectDirectory, EXTENSIONS_FILENAME);
++        File extensionsFile =
++                cliRequest.rootDirectory.resolve(EXTENSIONS_FILENAME).toFile();
+         if (!extensionsFile.isFile()) {
+             return Collections.emptyList();
+         }
+@@ -1329,7 +1332,7 @@ private MavenExecutionRequest populateRequest(CliRequest cliRequest, MavenExecut
+                 .setUpdateSnapshots(updateSnapshots) // default: false
+                 .setNoSnapshotUpdates(noSnapshotUpdates) // default: false
+                 .setGlobalChecksumPolicy(globalChecksumPolicy) // default: warn
+-                .setMultiModuleProjectDirectory(cliRequest.multiModuleProjectDirectory);
++                .setMultiModuleProjectDirectory(rootOrTopDirectory(cliRequest).toFile());
+ 
+         if (alternatePomFile != null) {
+             File pom = resolveFile(new File(alternatePomFile), workingDirectory);
+@@ -1541,6 +1544,14 @@ static void populateProperties(CliRequest cliRequest, Properties systemPropertie
+         systemProperties.setProperty(""maven.build.version"", mavenBuildVersion);
+     }
+ 
++    protected Path rootOrTopDirectory(CliRequest request) {
++        if (request.rootDirectory != null) {
++            return request.rootDirectory;
++        } else {
++            return request.topDirectory;
++        }
++    }
++
+     protected boolean isAcceptableRootDirectory(Path path) {
+         return path != null && Files.isDirectory(path.resolve(DOT_MVN));
+     }"
+apache/maven,MavenExecutionRequest | CliRequest | MavenCli | MavenCliTest,[MNG-8165] top/root/multimodule mixup,bug,2024-07-09T19:14:38Z,2024-07-10T08:22:11Z,0ac1513230c94ec16a4179b41d7c5341e2c737d9,Fix for -f search,maven-embedder/src/main/java/org/apache/maven/cli/MavenCli.java,MavenCli.java,modified,3,1,"@@ -30,6 +30,7 @@
+ import java.nio.charset.Charset;
+ import java.nio.file.Files;
+ import java.nio.file.Path;
++import java.nio.file.Paths;
+ import java.util.ArrayList;
+ import java.util.Collections;
+ import java.util.HashSet;
+@@ -319,12 +320,13 @@ void initialize(CliRequest cliRequest) throws ExitException {
+         // We need to locate the top level project which may be pointed at using
+         // the -f/--file option.  However, the command line isn't parsed yet, so
+         // we need to iterate through the args to find it and act upon it.
++        Path cwd = Paths.get(cliRequest.workingDirectory);
+         Path topDirectory = cliRequest.multiModuleProjectDirectory.toPath();
+         boolean isAltFile = false;
+         for (String arg : cliRequest.args) {
+             if (isAltFile) {
+                 // this is the argument following -f/--file
+-                Path path = topDirectory.resolve(stripLeadingAndTrailingQuotes(arg));
++                Path path = cwd.resolve(stripLeadingAndTrailingQuotes(arg));
+                 if (Files.isDirectory(path)) {
+                     topDirectory = path;
+                 } else if (Files.isRegularFile(path)) {"
+apache/maven,MavenExecutionRequest | CliRequest | MavenCli | MavenCliTest,[MNG-8165] top/root/multimodule mixup,bug,2024-07-09T19:14:38Z,2024-07-10T08:22:11Z,86878776a101da1444dffda64a8d7eaaed55c19a,Add remark why we do it like this,maven-embedder/src/main/java/org/apache/maven/cli/MavenCli.java,MavenCli.java,modified,1,0,"@@ -321,6 +321,7 @@ void initialize(CliRequest cliRequest) throws ExitException {
+         // the -f/--file option.  However, the command line isn't parsed yet, so
+         // we need to iterate through the args to find it and act upon it.
+         Path cwd = Paths.get(cliRequest.workingDirectory);
++        // MavenCliTest extensively use MULTIMODULE_PROJECT_DIRECTORY
+         Path topDirectory = cliRequest.multiModuleProjectDirectory.toPath();
+         boolean isAltFile = false;
+         for (String arg : cliRequest.args) {"
+apache/maven,MavenExecutionRequest | CliRequest | MavenCli | MavenCliTest,[MNG-8165] top/root/multimodule mixup,bug,2024-07-09T19:14:38Z,2024-07-10T08:22:11Z,acc1327274f3b08bd1814e54396902e5be312351,Typo,maven-embedder/src/main/java/org/apache/maven/cli/MavenCli.java,MavenCli.java,modified,1,1,"@@ -321,7 +321,7 @@ void initialize(CliRequest cliRequest) throws ExitException {
+         // the -f/--file option.  However, the command line isn't parsed yet, so
+         // we need to iterate through the args to find it and act upon it.
+         Path cwd = Paths.get(cliRequest.workingDirectory);
+-        // MavenCliTest extensively use MULTIMODULE_PROJECT_DIRECTORY
++        // MavenCliTest extensively uses MULTIMODULE_PROJECT_DIRECTORY
+         Path topDirectory = cliRequest.multiModuleProjectDirectory.toPath();
+         boolean isAltFile = false;
+         for (String arg : cliRequest.args) {"
+apache/maven,MavenExecutionRequest | CliRequest | MavenCli | MavenCliTest,[MNG-8165] top/root/multimodule mixup,bug,2024-07-09T19:14:38Z,2024-07-10T08:22:11Z,9f969d69115a2b1877e42267ab2267fbb50fc270,Remove irrelevant change,maven-embedder/src/main/java/org/apache/maven/cli/MavenCli.java,MavenCli.java,modified,1,9,"@@ -1335,7 +1335,7 @@ private MavenExecutionRequest populateRequest(CliRequest cliRequest, MavenExecut
+                 .setUpdateSnapshots(updateSnapshots) // default: false
+                 .setNoSnapshotUpdates(noSnapshotUpdates) // default: false
+                 .setGlobalChecksumPolicy(globalChecksumPolicy) // default: warn
+-                .setMultiModuleProjectDirectory(rootOrTopDirectory(cliRequest).toFile());
++                .setMultiModuleProjectDirectory(cliRequest.multiModuleProjectDirectory);
+ 
+         if (alternatePomFile != null) {
+             File pom = resolveFile(new File(alternatePomFile), workingDirectory);
+@@ -1547,14 +1547,6 @@ static void populateProperties(CliRequest cliRequest, Properties systemPropertie
+         systemProperties.setProperty(""maven.build.version"", mavenBuildVersion);
+     }
+ 
+-    protected Path rootOrTopDirectory(CliRequest request) {
+-        if (request.rootDirectory != null) {
+-            return request.rootDirectory;
+-        } else {
+-            return request.topDirectory;
+-        }
+-    }
+-
+     protected boolean isAcceptableRootDirectory(Path path) {
+         return path != null && Files.isDirectory(path.resolve(DOT_MVN));
+     }"
+apache/maven,MavenExecutionRequest | CliRequest | MavenCli | MavenCliTest,[MNG-8165] top/root/multimodule mixup,bug,2024-07-09T19:14:38Z,2024-07-10T08:22:11Z,b3ca66245995a4cc717dfecbd5dd017f2d0d2ce4,Fixes,maven-core/src/main/java/org/apache/maven/execution/MavenExecutionRequest.java,MavenExecutionRequest.java,modified,4,0,"@@ -433,12 +433,16 @@ public interface MavenExecutionRequest {
+ 
+     /**
+      * @since 3.3.0
++     * @deprecated
+      */
++    @Deprecated
+     void setMultiModuleProjectDirectory(File file);
+ 
+     /**
+      * @since 3.3.0
++     * @deprecated
+      */
++    @Deprecated
+     File getMultiModuleProjectDirectory();
+ 
+     /**"
+apache/maven,MavenExecutionRequest | CliRequest | MavenCli | MavenCliTest,[MNG-8165] top/root/multimodule mixup,bug,2024-07-09T19:14:38Z,2024-07-10T08:22:11Z,b3ca66245995a4cc717dfecbd5dd017f2d0d2ce4,Fixes,maven-embedder/src/main/java/org/apache/maven/cli/CliRequest.java,CliRequest.java,modified,1,0,"@@ -39,6 +39,7 @@ public class CliRequest {
+ 
+     String workingDirectory;
+ 
++    @Deprecated
+     File multiModuleProjectDirectory;
+ 
+     Path rootDirectory;"
+apache/maven,MavenExecutionRequest | CliRequest | MavenCli | MavenCliTest,[MNG-8165] top/root/multimodule mixup,bug,2024-07-09T19:14:38Z,2024-07-10T08:22:11Z,b3ca66245995a4cc717dfecbd5dd017f2d0d2ce4,Fixes,maven-embedder/src/main/java/org/apache/maven/cli/MavenCli.java,MavenCli.java,modified,3,4,"@@ -130,6 +130,7 @@
+ public class MavenCli {
+     public static final String LOCAL_REPO_PROPERTY = ""maven.repo.local"";
+ 
++    @Deprecated
+     public static final String MULTIMODULE_PROJECT_DIRECTORY = ""maven.multiModuleProjectDirectory"";
+ 
+     public static final String USER_HOME = System.getProperty(""user.home"");
+@@ -320,14 +321,12 @@ void initialize(CliRequest cliRequest) throws ExitException {
+         // We need to locate the top level project which may be pointed at using
+         // the -f/--file option.  However, the command line isn't parsed yet, so
+         // we need to iterate through the args to find it and act upon it.
+-        Path cwd = Paths.get(cliRequest.workingDirectory);
+-        // MavenCliTest extensively uses MULTIMODULE_PROJECT_DIRECTORY
+-        Path topDirectory = cliRequest.multiModuleProjectDirectory.toPath();
++        Path topDirectory = Paths.get(cliRequest.workingDirectory);
+         boolean isAltFile = false;
+         for (String arg : cliRequest.args) {
+             if (isAltFile) {
+                 // this is the argument following -f/--file
+-                Path path = cwd.resolve(stripLeadingAndTrailingQuotes(arg));
++                Path path = topDirectory.resolve(stripLeadingAndTrailingQuotes(arg));
+                 if (Files.isDirectory(path)) {
+                     topDirectory = path;
+                 } else if (Files.isRegularFile(path)) {"
+apache/maven,MavenExecutionRequest | CliRequest | MavenCli | MavenCliTest,[MNG-8165] top/root/multimodule mixup,bug,2024-07-09T19:14:38Z,2024-07-10T08:22:11Z,b3ca66245995a4cc717dfecbd5dd017f2d0d2ce4,Fixes,maven-embedder/src/test/java/org/apache/maven/cli/MavenCliTest.java,MavenCliTest.java,modified,18,19,"@@ -33,6 +33,7 @@
+ import org.codehaus.plexus.PlexusContainer;
+ import org.junit.After;
+ import org.junit.Before;
++import org.junit.Ignore;
+ import org.junit.Test;
+ import org.junit.function.ThrowingRunnable;
+ import org.mockito.InOrder;
+@@ -95,9 +96,9 @@ public void testCalculateDegreeOfConcurrency() {
+ 
+     @Test
+     public void testMavenConfig() throws Exception {
+-        System.setProperty(
+-                MavenCli.MULTIMODULE_PROJECT_DIRECTORY, new File(""src/test/projects/config"").getCanonicalPath());
+-        CliRequest request = new CliRequest(new String[0], null);
++        String rootDirectory = new File(""src/test/projects/config"").getCanonicalPath();
++        System.setProperty(MavenCli.MULTIMODULE_PROJECT_DIRECTORY, rootDirectory);
++        CliRequest request = new CliRequest(new String[] {""-f"", rootDirectory}, null);
+ 
+         // read .mvn/maven.config
+         cli.initialize(request);
+@@ -113,10 +114,9 @@ public void testMavenConfig() throws Exception {
+ 
+     @Test
+     public void testMavenConfigInvalid() throws Exception {
+-        System.setProperty(
+-                MavenCli.MULTIMODULE_PROJECT_DIRECTORY,
+-                new File(""src/test/projects/config-illegal"").getCanonicalPath());
+-        CliRequest request = new CliRequest(new String[0], null);
++        String rootDirectory = new File(""src/test/projects/config-illegal"").getCanonicalPath();
++        System.setProperty(MavenCli.MULTIMODULE_PROJECT_DIRECTORY, rootDirectory);
++        CliRequest request = new CliRequest(new String[] {""-f"", rootDirectory}, null);
+ 
+         cli.initialize(request);
+         try {
+@@ -142,10 +142,9 @@ public void testMavenConfigInvalid() throws Exception {
+      */
+     @Test
+     public void testMVNConfigurationThreadCanBeOverwrittenViaCommandLine() throws Exception {
+-        System.setProperty(
+-                MavenCli.MULTIMODULE_PROJECT_DIRECTORY,
+-                new File(""src/test/projects/mavenConfigProperties"").getCanonicalPath());
+-        CliRequest request = new CliRequest(new String[] {""-T"", ""5""}, null);
++        String rootDirectory = new File(""src/test/projects/mavenConfigProperties"").getCanonicalPath();
++        System.setProperty(MavenCli.MULTIMODULE_PROJECT_DIRECTORY, rootDirectory);
++        CliRequest request = new CliRequest(new String[] {""-f"", rootDirectory, ""-T"", ""5""}, null);
+ 
+         cli.initialize(request);
+         // read .mvn/maven.config
+@@ -169,10 +168,9 @@ public void testMVNConfigurationThreadCanBeOverwrittenViaCommandLine() throws Ex
+      */
+     @Test
+     public void testMVNConfigurationDefinedPropertiesCanBeOverwrittenViaCommandLine() throws Exception {
+-        System.setProperty(
+-                MavenCli.MULTIMODULE_PROJECT_DIRECTORY,
+-                new File(""src/test/projects/mavenConfigProperties"").getCanonicalPath());
+-        CliRequest request = new CliRequest(new String[] {""-Drevision=8.1.0""}, null);
++        String rootDirectory = new File(""src/test/projects/mavenConfigProperties"").getCanonicalPath();
++        System.setProperty(MavenCli.MULTIMODULE_PROJECT_DIRECTORY, rootDirectory);
++        CliRequest request = new CliRequest(new String[] {""-f"", rootDirectory, ""-Drevision=8.1.0""}, null);
+ 
+         cli.initialize(request);
+         // read .mvn/maven.config
+@@ -198,10 +196,10 @@ public void testMVNConfigurationDefinedPropertiesCanBeOverwrittenViaCommandLine(
+      */
+     @Test
+     public void testMVNConfigurationCLIRepeatedPropertiesLastWins() throws Exception {
+-        System.setProperty(
+-                MavenCli.MULTIMODULE_PROJECT_DIRECTORY,
+-                new File(""src/test/projects/mavenConfigProperties"").getCanonicalPath());
+-        CliRequest request = new CliRequest(new String[] {""-Drevision=8.1.0"", ""-Drevision=8.2.0""}, null);
++        String rootDirectory = new File(""src/test/projects/mavenConfigProperties"").getCanonicalPath();
++        System.setProperty(MavenCli.MULTIMODULE_PROJECT_DIRECTORY, rootDirectory);
++        CliRequest request =
++                new CliRequest(new String[] {""-f"", rootDirectory, ""-Drevision=8.1.0"", ""-Drevision=8.2.0""}, null);
+ 
+         cli.initialize(request);
+         // read .mvn/maven.config
+@@ -226,6 +224,7 @@ public void testMVNConfigurationCLIRepeatedPropertiesLastWins() throws Exception
+      * @throws Exception
+      */
+     @Test
++    @Ignore(""This UT plays with multiModuleProjectDirectory and -f should not be possible"")
+     public void testMVNConfigurationFunkyArguments() throws Exception {
+         System.setProperty(
+                 MavenCli.MULTIMODULE_PROJECT_DIRECTORY,"
+apache/maven,ApiRunner,[MNG-8084] add system properties to test,bug,2024-05-04T07:02:54Z,2024-05-06T05:31:23Z,d1e6b25828b0a1d7ce50466ea93bbe37871dface,"[MNG-8084] add system properties to test
+
+fixes ./${user.home} directory creation during tests execution",maven-api-impl/src/test/java/org/apache/maven/internal/impl/standalone/ApiRunner.java,ApiRunner.java,modified,1,0,"@@ -153,6 +153,7 @@ protected DefaultSession(
+             super(session, repositorySystem, repositories, resolverRepositories, lookup);
+             systemProperties = System.getenv().entrySet().stream()
+                     .collect(Collectors.toMap(e -> ""env."" + e.getKey(), e -> e.getValue()));
++            System.getProperties().forEach((k, v) -> systemProperties.put(k.toString(), v.toString()));
+         }
+ 
+         @Override"
+apache/maven,PluginDescriptor | PluginDescriptorBuilder,[MNG-4840] fix requiredMavenVersion description #1444,bug,2024-03-25T22:23:54Z,2024-03-27T14:32:32Z,d48b96ffbc71f9a459301bb6febb294d7ba56d10,[MNG-4840] fix requiredMavenVersion description #1444,maven-plugin-api/src/main/java/org/apache/maven/plugin/descriptor/PluginDescriptor.java,PluginDescriptor.java,modified,5,3,"@@ -77,7 +77,7 @@ public class PluginDescriptor extends ComponentSetDescriptor implements Cloneabl
+ 
+     private String description;
+ 
+-    // MNG-4840
++    // MNG-4840: set from plugin's pom.xml, not plugin.xml
+     private String requiredMavenVersion;
+ 
+     private Plugin plugin;
+@@ -297,17 +297,19 @@ public String getDescription() {
+     }
+ 
+     /**
+-     * Set required Maven version.
++     * Set required Maven version, as defined in plugin's pom.xml (not plugin.xml).
+      *
+      * @param requiredMavenVersion Maven version required by the plugin
+      * @since 3.0.2
+      */
++    // used by maven-core's org.apache.maven.plugin.internal.DefaultMavenPluginManager#getPluginDescriptor(...)
++    // but NOT PluginDescriptorBuilder
+     public void setRequiredMavenVersion(String requiredMavenVersion) {
+         this.requiredMavenVersion = requiredMavenVersion;
+     }
+ 
+     /**
+-     * Get required Maven version.
++     * Get required Maven version, as defined in plugin's pom.xml (not plugin.xml).
+      *
+      * @return the Maven version required by the plugin
+      * @since 3.0.2"
+apache/maven,PluginDescriptor | PluginDescriptorBuilder,[MNG-4840] fix requiredMavenVersion description #1444,bug,2024-03-25T22:23:54Z,2024-03-27T14:32:32Z,d48b96ffbc71f9a459301bb6febb294d7ba56d10,[MNG-4840] fix requiredMavenVersion description #1444,maven-plugin-api/src/main/java/org/apache/maven/plugin/descriptor/PluginDescriptorBuilder.java,PluginDescriptorBuilder.java,modified,2,0,"@@ -32,6 +32,8 @@
+ import org.codehaus.plexus.util.xml.pull.XmlPullParserException;
+ 
+ /**
++ * Build plugin descriptor object from {@code plugin.xml}.
++ *
+  * @author Jason van Zyl
+  */
+ public class PluginDescriptorBuilder {"
