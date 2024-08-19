@@ -1,0 +1,641 @@
+full_repo_name,class_names,pr_title,labels,created_at,closed_at,commit_sha,commit_message,file_path,file_name,status,additions,deletions,patch
+google/closure-compiler,CompilerTestCase,Support inheritance of properties which are not enumerable,bug | ES6 | cla: yes,2017-03-16T19:11:54Z,2017-04-08T13:24:05Z,5bb9deb9f4c25d0edf10fcf48a917e66b838bc8b,Have the ES6 inheritance polyfill properly inherit non-enumerable properties.,test/com/google/javascript/jscomp/CompilerTestCase.java,CompilerTestCase.java,modified,6,0,"@@ -304,6 +304,12 @@ public abstract class CompilerTestCase extends TestCase {
+           ""Object.getOwnPropertyDescriptor = function(obj, prop) {};"",
+           ""/**"",
+           "" * @param {!Object} obj"",
++          "" * @return {!Array<string>}"",
++          "" * @nosideeffects"",
++          "" */"",
++          ""Object.getOwnPropertyNames = function(obj) {};"",
++          ""/**"",
++          "" * @param {!Object} obj"",
+           "" * @param {string} prop"",
+           "" * @param {!Object} descriptor"",
+           "" * @return {!Object}"","
+google/closure-compiler,CompilerTestCase,Support inheritance of properties which are not enumerable,bug | ES6 | cla: yes,2017-03-16T19:11:54Z,2017-04-08T13:24:05Z,2a73f6b0125dac87918eedf3daa6c863f7cb8b49,Copy descriptors from both the parent constructor and its prototype,test/com/google/javascript/jscomp/CompilerTestCase.java,CompilerTestCase.java,modified,6,0,"@@ -310,6 +310,12 @@ public abstract class CompilerTestCase extends TestCase {
+           ""Object.getOwnPropertyNames = function(obj) {};"",
+           ""/**"",
+           "" * @param {!Object} obj"",
++          "" * @return {?Object}"",
++          "" * @nosideeffects"",
++          "" */"",
++          ""Object.getPrototypeOf = function(obj) {};"",
++          ""/**"",
++          "" * @param {!Object} obj"",
+           "" * @param {string} prop"",
+           "" * @param {!Object} descriptor"",
+           "" * @return {!Object}"","
+google/closure-compiler,NewIRFactory | NewParserTest,Exception thrown during RenameLabels for bad labels,bug | P1,2014-07-09T05:35:26Z,2014-07-25T19:00:44Z,22d596f22af8bfdf444b8bc786cbcb068386a3a1,Check for duplicate labels during parsing,src/com/google/javascript/jscomp/parsing/NewIRFactory.java,NewIRFactory.java,modified,20,0,"@@ -91,6 +91,9 @@ class NewIRFactory {
+   static final String DUPLICATE_PARAMETER =
+       ""Duplicate parameter name \""%s\"""";
+ 
++  static final String DUPLICATE_LABEL =
++      ""Duplicate label \""%s\"""";
++
+   static final String UNLABELED_BREAK =
+       ""unlabelled break must be inside loop or switch"";
+ 
+@@ -244,6 +247,7 @@ private void validate(Node n) {
+     validateTypeAnnotations(n);
+     validateParameters(n);
+     validateBreakContinue(n);
++    validateLabel(n);
+   }
+ 
+   private void validateBreakContinue(Node n) {
+@@ -414,6 +418,22 @@ private void validateTypeAnnotations(Node n) {
+     }
+   }
+ 
++  private void validateLabel(Node n) {
++    if (n.isLabel()) {
++      Node labelName = n.getFirstChild();
++      for (Node parent = n.getParent();
++           parent != null && !parent.isFunction(); parent = parent.getParent()) {
++        if (parent.isLabel() && labelsMatch(parent, labelName)) {
++          errorReporter.error(
++              String.format(DUPLICATE_LABEL, labelName.getString()),
++              sourceName,
++              n.getLineno(), n.getCharno());
++          break;
++        }
++      }
++    }
++  }
++
+   private void setFileOverviewJsDoc(Node irNode) {
+     // Only after we've seen all @fileoverview entries, attach the
+     // last one to the root node, and copy the found license strings"
+google/closure-compiler,NewIRFactory | NewParserTest,Exception thrown during RenameLabels for bad labels,bug | P1,2014-07-09T05:35:26Z,2014-07-25T19:00:44Z,22d596f22af8bfdf444b8bc786cbcb068386a3a1,Check for duplicate labels during parsing,test/com/google/javascript/jscomp/parsing/NewParserTest.java,NewParserTest.java,modified,32,0,"@@ -129,6 +129,38 @@ public void testContinueNotCrossFunction2() {
+         UNDEFINED_LABEL + "" \""a\"""");
+   }
+ 
++  public void testLabel1() {
++    parse(""foo:bar"");
++  }
++
++  public void testLabel2() {
++    parse(""{foo:bar}"");
++  }
++
++  public void testLabel3() {
++    parse(""foo:bar:baz"");
++  }
++
++  public void testDuplicateLabelWithoutBraces() {
++    parseError(""foo:foo:bar"", ""Duplicate label \""foo\"""");
++  }
++
++  public void testDuplicateLabelWithBraces() {
++    parseError(""foo:{bar;foo:baz}"", ""Duplicate label \""foo\"""");
++  }
++
++  public void testDuplicateLabelWithFor() {
++    parseError(""foo:for(;;){foo:bar}"", ""Duplicate label \""foo\"""");
++  }
++
++  public void testNonDuplicateLabelSiblings() {
++    parse(""foo:1;foo:2"");
++  }
++
++  public void testNonDuplicateLabelCrossFunction() {
++    parse(""foo:(function(){foo:2})"");
++  }
++
+   public void testLinenoCharnoAssign1() throws Exception {
+     Node assign = parse(""a = b"").getFirstChild().getFirstChild();
+ "
+google/closure-compiler,PeepholeRemoveDeadCode | IntegrationTest | PeepholeRemoveDeadCodeTest,Remove assignment to properties of return values of no-side-effect calls,enhancement | cla: yes | Work In Progress,2016-04-20T23:41:15Z,2017-01-20T18:08:19Z,6b737f78ae249d716aa4f5b288e0f316843a7924,"Remove assignment to properties of return values of no-side-effect calls
+
+Assignments like ""Object.create({}).prop = 1"" is dead code and should be
+removed.
+
+Closes #1745.",src/com/google/javascript/jscomp/PeepholeRemoveDeadCode.java,PeepholeRemoveDeadCode.java,modified,26,6,"@@ -117,23 +117,43 @@ private Node tryFoldTry(Node n) {
+     return n;
+   }
+ 
++  private Node foldAssignment(Node subtree, Node right) {
++    subtree.getParent().replaceChild(subtree, right.detachFromParent());
++    reportCodeChange();
++    return right;
++  }
++
+   /**
+-   * Try removing identity assignments
++   * Try removing dead assignments like identity assignments, or assignments to properties of
++   * objects created by calls that have no side effects, like ""Object.create({}).prop = 1""
++   *
+    * @return the replacement node, if changed, or the original if not
+    */
+   private Node tryFoldAssignment(Node subtree) {
+     Preconditions.checkState(subtree.isAssign());
+     Node left = subtree.getFirstChild();
+     Node right = subtree.getLastChild();
+-    // Only names
++    // Identity assignments on NAMEs only, like ""a = a"". Cases like ""a.b = a.b"" are not handled yet.
+     if (left.isName()
+         && right.isName()
+         && left.getString().equals(right.getString())) {
+-      subtree.getParent().replaceChild(subtree, right.detachFromParent());
+-      reportCodeChange();
+-      return right;
++      return foldAssignment(subtree, right);
+     }
+-    return subtree;
++
++    // Handle cases like ""Object.create({}).prop = 1"". Note that we only fold if all calls are
++    // side effect free.
++    boolean canFold = false;
++    while (left.isGetProp() || left.isCall()) {
++      if (left.isCall()) {
++        if (left.isNoSideEffectsCall()) {
++          canFold = true;
++        } else {
++          return subtree;
++        }
++      }
++      left = left.getFirstChild();
++    }
++    return canFold ? foldAssignment(subtree, right) : subtree;
+   }
+ 
+   /**"
+google/closure-compiler,PeepholeRemoveDeadCode | IntegrationTest | PeepholeRemoveDeadCodeTest,Remove assignment to properties of return values of no-side-effect calls,enhancement | cla: yes | Work In Progress,2016-04-20T23:41:15Z,2017-01-20T18:08:19Z,6b737f78ae249d716aa4f5b288e0f316843a7924,"Remove assignment to properties of return values of no-side-effect calls
+
+Assignments like ""Object.create({}).prop = 1"" is dead code and should be
+removed.
+
+Closes #1745.",test/com/google/javascript/jscomp/IntegrationTest.java,IntegrationTest.java,modified,12,18,"@@ -2124,42 +2124,36 @@ public void testFoldLocals4() {
+ 
+   public void testFoldLocals5() {
+     CompilerOptions options = createCompilerOptions();
+-
+     options.setFoldConstants(true);
+ 
+-    String code =
+-        """"
+-        + ""function fn(){var a={};a.x={};return a}""
+-        + ""fn().x.y = 1;"";
+-
+-    // ""fn"" returns a unescaped local object, we should be able to fold it,
+-    // but we don't currently.
+-    String result = """"
+-        + ""function fn(){var a={x:{}};return a}""
+-        + ""fn().x.y = 1;"";
++    String code = LINE_JOINER.join(
++        ""function fn() { var a = {}; a.x = {}; return a; }"",
++        ""fn().x.y = 1;"");
+ 
+-    test(options, code, result);
++    // ""fn"" returns a unescaped local object. we should be able to fold it, but we don't currently.
++    test(options, code, LINE_JOINER.join(
++        ""function fn() { var a = {x: {}}; return a }"",
++        ""fn().x.y = 1;""));
+ 
+     options.setComputeFunctionSideEffects(true);
+ 
+-    test(options, code, result);
++    test(options, code, ""function fn() { var a = {x: {}}; return a }"");
+   }
+ 
+   public void testFoldLocals6() {
+     CompilerOptions options = createCompilerOptions();
+ 
+     options.setFoldConstants(true);
+ 
+-    String code =
+-        """"
+-        + ""function fn(){return {}}""
+-        + ""fn().x.y = 1;"";
++    String code = LINE_JOINER.join(
++        ""function fn() { return {}; }"",
++        ""fn().x.y = 1;"");
+ 
+     testSame(options, code);
+ 
+     options.setComputeFunctionSideEffects(true);
+ 
+-    testSame(options, code);
++    test(options, code, ""function fn() { return {}; }"");
+   }
+ 
+   public void testFoldLocals7() {"
+google/closure-compiler,PeepholeRemoveDeadCode | IntegrationTest | PeepholeRemoveDeadCodeTest,Remove assignment to properties of return values of no-side-effect calls,enhancement | cla: yes | Work In Progress,2016-04-20T23:41:15Z,2017-01-20T18:08:19Z,6b737f78ae249d716aa4f5b288e0f316843a7924,"Remove assignment to properties of return values of no-side-effect calls
+
+Assignments like ""Object.create({}).prop = 1"" is dead code and should be
+removed.
+
+Closes #1745.",test/com/google/javascript/jscomp/PeepholeRemoveDeadCodeTest.java,PeepholeRemoveDeadCodeTest.java,modified,24,5,"@@ -25,13 +25,21 @@
+ 
+ public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
+ 
+-  private static final String MATH =
+-      ""/** @const */ var Math = {};"" +
+-      ""/** @nosideeffects */ Math.random = function(){};"" +
+-      ""/** @nosideeffects */ Math.sin = function(){};"";
++  private static final String MATH = LINE_JOINER.join(
++      ""/** @const */ var Math = {};"",
++      ""/** @nosideeffects */ Math.random = function() {};"",
++      ""/** @nosideeffects */ Math.sin = function() {};"");
++
++  private static final String OBJECT =
++      ""/** @nosideeffects */ Object.create = function(proto, opt_properties) {};"";
++
++  private static final String JQUERY = LINE_JOINER.join(
++      ""/** @constructor */ function $() {};"",
++      ""/** @nosideeffects */ $.prototype.add = function() {};"",
++      ""$.prototype.addClass = function() {};"");
+ 
+   public PeepholeRemoveDeadCodeTest() {
+-    super(MATH);
++    super(MATH + OBJECT + JQUERY);
+   }
+ 
+   @Override
+@@ -732,6 +740,17 @@ public void testFoldAssign() {
+     testSame(""x.a=x.a"");
+     test(""var y=(x=x)"", ""var y=x"");
+     test(""y=1 + (x=x)"", ""y=1 + x"");
++
++    // GitHub issue #1745: https://github.com/google/closure-compiler/issues/1745
++    test(""Object.create({}).prop = 1"", """");
++    test(""Object.create(proto).foo.bar.baz = 1"", """");
++
++    // add() is side-effect free, but addClass() is not
++    test(""var jQuery = new $; jQuery.add().add().bar = 1"", ""var jQuery = new $;"");
++    test(""var jQuery = new $; jQuery.add().bar.add().baz = 1"", ""var jQuery = new $;"");
++    test(""var jQuery = new $; jQuery.bar.add().baz = 1"", ""var jQuery = new $;"");
++    testSame(""var jQuery = new $; jQuery.add().addClass().bar = 1"");
++    testSame(""var jQuery = new $; jQuery.addClass().add().bar = 1"");
+   }
+ 
+   public void testTryCatchFinally() {"
+google/closure-compiler,InferJSDocInfo | CheckAccessControlsTest,Infer JSDoc for STRING_KEY tokens,enhancement,2014-06-11T16:37:52Z,2014-06-16T19:49:44Z,27937dd984f5f092ed9c4f9b76a7fc895ad2b5e6,Infer JSDoc for STRING_KEY tokens,src/com/google/javascript/jscomp/InferJSDocInfo.java,InferJSDocInfo.java,modified,14,0,"@@ -146,6 +146,20 @@ public void visit(NodeTraversal t, Node n, Node parent) {
+         attachJSDocInfoToNominalTypeOrShape(objType, docInfo, n.getString());
+         break;
+ 
++      case Token.STRING_KEY:
++        docInfo = n.getJSDocInfo();
++        if (docInfo == null) {
++          return;
++        }
++        ObjectType owningType = dereferenceToObject(parent.getJSType());
++        if (owningType != null) {
++          String propName = n.getString();
++          if (owningType.hasOwnProperty(propName)) {
++            owningType.setPropertyJSDocInfo(propName, docInfo);
++          }
++        }
++        break;
++
+       case Token.GETPROP:
+         // Infer JSDocInfo on properties.
+         // There are two ways to write doc comments on a property."
+google/closure-compiler,InferJSDocInfo | CheckAccessControlsTest,Infer JSDoc for STRING_KEY tokens,enhancement,2014-06-11T16:37:52Z,2014-06-16T19:49:44Z,27937dd984f5f092ed9c4f9b76a7fc895ad2b5e6,Infer JSDoc for STRING_KEY tokens,test/com/google/javascript/jscomp/CheckAccessControlsTest.java,CheckAccessControlsTest.java,modified,40,0,"@@ -469,6 +469,26 @@ public void testNoPrivateAccessForProperties8() {
+     }, null, PRIVATE_OVERRIDE);
+   }
+ 
++  public void testNoPrivateAccessForProperties9() {
++    test(new String[] {
++      ""/** @constructor */ function Foo() {}"" +
++      ""Foo.prototype = {"" +
++      ""/** @private */ bar_: 3"" +
++      ""}"",
++      ""new Foo().bar_;""
++    }, null, BAD_PRIVATE_PROPERTY_ACCESS);
++  }
++
++  public void testNoPrivateAccessForProperties10() {
++    test(new String[] {
++      ""/** @constructor */ function Foo() {}"" +
++      ""Foo.prototype = {"" +
++      ""/** @private */ bar_: function() {}"" +
++      ""}"",
++      ""new Foo().bar_();""
++    }, null, BAD_PRIVATE_PROPERTY_ACCESS);
++  }
++
+   public void testProtectedAccessForProperties1() {
+     testSame(new String[] {
+       ""/** @constructor */ function Foo() {}"" +
+@@ -574,6 +594,26 @@ public void testNoProtectedAccessForProperties5() {
+     }, null, BAD_PROTECTED_PROPERTY_ACCESS);
+   }
+ 
++  public void testNoProtectedAccessForProperties6() {
++      test(new String[] {
++        ""/** @constructor */ function Foo() {}"" +
++        ""Foo.prototype = {"" +
++        ""/** @protected */ bar_: 3"" +
++        ""}"",
++        ""new Foo().bar_;""
++      }, null, BAD_PROTECTED_PROPERTY_ACCESS);
++    }
++
++    public void testNoProtectedAccessForProperties7() {
++      test(new String[] {
++        ""/** @constructor */ function Foo() {}"" +
++        ""Foo.prototype = {"" +
++        ""/** @protected */ bar_: function() {}"" +
++        ""}"",
++        ""new Foo().bar_();""
++      }, null, BAD_PROTECTED_PROPERTY_ACCESS);
++    }
++
+   public void testPackagePrivateAccessForNames() {
+     test(ImmutableList.of(
+       SourceFile.fromCode("
+google/closure-compiler,InferJSDocInfo | CheckAccessControlsTest,Infer JSDoc for STRING_KEY tokens,enhancement,2014-06-11T16:37:52Z,2014-06-16T19:49:44Z,c4e4e72d1ac6a9ce6db6d6a93ad8ec11723f24cf,Handle the getter and setter case,src/com/google/javascript/jscomp/InferJSDocInfo.java,InferJSDocInfo.java,modified,2,0,"@@ -147,6 +147,8 @@ public void visit(NodeTraversal t, Node n, Node parent) {
+         break;
+ 
+       case Token.STRING_KEY:
++      case Token.GETTER_DEF:
++      case Token.SETTER_DEF:
+         docInfo = n.getJSDocInfo();
+         if (docInfo == null) {
+           return;"
+google/closure-compiler,InferJSDocInfo | CheckAccessControlsTest,Infer JSDoc for STRING_KEY tokens,enhancement,2014-06-11T16:37:52Z,2014-06-16T19:49:44Z,c4e4e72d1ac6a9ce6db6d6a93ad8ec11723f24cf,Handle the getter and setter case,test/com/google/javascript/jscomp/CheckAccessControlsTest.java,CheckAccessControlsTest.java,modified,20,0,"@@ -489,6 +489,26 @@ public void testNoPrivateAccessForProperties10() {
+     }, null, BAD_PRIVATE_PROPERTY_ACCESS);
+   }
+ 
++  public void testNoPrivateAccessForProperties11() {
++    test(new String[] {
++      ""/** @constructor */ function Foo() {}"" +
++      ""Foo.prototype = {"" +
++      ""/** @private */ get bar_() { return 1; }"" +
++      ""}"",
++      ""var a = new Foo().bar_;""
++    }, null, BAD_PRIVATE_PROPERTY_ACCESS);
++  }
++
++  public void testNoPrivateAccessForProperties12() {
++    test(new String[] {
++      ""/** @constructor */ function Foo() {}"" +
++      ""Foo.prototype = {"" +
++      ""/** @private */ set bar_(x) { this.barValue = x; }"" +
++      ""}"",
++      ""new Foo().bar_ = 1;""
++    }, null, BAD_PRIVATE_PROPERTY_ACCESS);
++  }
++
+   public void testProtectedAccessForProperties1() {
+     testSame(new String[] {
+       ""/** @constructor */ function Foo() {}"" +"
+google/closure-compiler,FunctionType | TypeValidatorTest,Remove the special case for interfaces in isSubTypeOf() in FunctionType,internal cleanup | cla: yes | OTI,2016-03-13T03:16:47Z,2016-03-23T18:08:49Z,956974470ee1d0f8c59a41ad5dcf9ed227710dd7,"Remove the special case for interfaces in isSubTypeOf() in FunctionType
+
+The special case doesn't quite make sense and it's untested. it causes
+TypeValidator to generate an obscure warning on this code:
+
+    /** @interface */ function Foo() {};
+    var /** Function */ x = Foo;
+
+    input0:3: WARNING - initializing variable
+    found   : function (this:Foo): ?
+    required: (Function|null)
+    var /** Function */ x = Foo;
+                            ^
+
+It also causes TypeValidator to generate an extra warning when a class
+accidentally extends an interface.
+
+NTI doesn't have this special handling.
+
+Fixes #1643.",src/com/google/javascript/rhino/jstype/FunctionType.java,FunctionType.java,modified,0,9,"@@ -1069,15 +1069,6 @@ protected boolean isSubtype(JSType that,
+ 
+     if (that.isFunctionType()) {
+       FunctionType other = that.toMaybeFunctionType();
+-      if (other.isInterface()) {
+-        // Any function can be assigned to an interface function.
+-        return true;
+-      }
+-      if (isInterface()) {
+-        // An interface function cannot be assigned to anything.
+-        return false;
+-      }
+-
+       return treatThisTypesAsCovariant(other, implicitImplCache)
+           && this.call.isSubtype(other.call, implicitImplCache);
+     }"
+google/closure-compiler,FunctionType | TypeValidatorTest,Remove the special case for interfaces in isSubTypeOf() in FunctionType,internal cleanup | cla: yes | OTI,2016-03-13T03:16:47Z,2016-03-23T18:08:49Z,956974470ee1d0f8c59a41ad5dcf9ed227710dd7,"Remove the special case for interfaces in isSubTypeOf() in FunctionType
+
+The special case doesn't quite make sense and it's untested. it causes
+TypeValidator to generate an obscure warning on this code:
+
+    /** @interface */ function Foo() {};
+    var /** Function */ x = Foo;
+
+    input0:3: WARNING - initializing variable
+    found   : function (this:Foo): ?
+    required: (Function|null)
+    var /** Function */ x = Foo;
+                            ^
+
+It also causes TypeValidator to generate an extra warning when a class
+accidentally extends an interface.
+
+NTI doesn't have this special handling.
+
+Fixes #1643.",test/com/google/javascript/jscomp/TypeValidatorTest.java,TypeValidatorTest.java,modified,15,0,"@@ -203,6 +203,21 @@ public void testSubclass() {
+     assertMismatches(Collections.<TypeMismatch>emptyList());
+   }
+ 
++  public void testExtendInterfaceNoExtraWarning() {
++    testSame(LINE_JOINER.join(
++        ""/** @interface */"",
++        ""function SuperInterface() {}"",
++        ""/**"",
++        "" * @constructor"",
++        "" * @extends {SuperInterface}"",
++        "" */"",
++        ""function Sub() {}"",
++        ""/** @param {!Function} x */ function f(x) {}"",
++        ""f(SuperInterface);""),
++        TypeCheck.CONFLICTING_EXTENDED_TYPE);
++    assertMismatches(Collections.<TypeMismatch>emptyList());
++  }
++
+   private TypeMismatch fromNatives(JSTypeNative a, JSTypeNative b) {
+     JSTypeRegistry registry = compiler.getTypeRegistry();
+     return new TypeMismatch("
+google/closure-compiler,DiagnosticGroups,"Add the ""trailingUnderscore"" DiagnosticGroup",internal cleanup | cla: yes,2016-03-10T00:40:31Z,2016-03-10T00:51:01Z,c5e4e9764b26796f172bd8695d305f4b31fc27cc,"Add the ""trailingUnderscore"" DiagnosticGroup.
+
+This makes the name more descriptive.
+
+Mark ""underscore"" as deprecated for now.",src/com/google/javascript/jscomp/DiagnosticGroups.java,DiagnosticGroups.java,modified,9,3,"@@ -102,10 +102,10 @@ public DiagnosticGroup forName(String name) {
+       + ""misplacedTypeAnnotation, missingGetCssName, missingProperties, ""
+       + ""missingProvide, missingRequire, missingReturn, msgDescriptions, ""
+       + ""newCheckTypes, nonStandardJsDocs, reportUnknownTypes, ""
+-      + ""suspiciousCode, strictModuleDepCheck, typeInvalidation, ""
+-      + ""undefinedNames, undefinedVars, unknownDefines, unnecessaryCasts, ""
++      + ""suspiciousCode, strictModuleDepCheck, trailingUnderscore, typeInvalidation, ""
++      + ""undefinedNames, undefinedVars, underscore, unknownDefines, unnecessaryCasts, ""
+       + ""unusedLocalVariables, unusedPrivateMembers, uselessCode, ""
+-      + ""useOfGoogBase, underscore, visibility"";
++      + ""useOfGoogBase, visibility"";
+ 
+   public static final DiagnosticGroup GLOBAL_THIS =
+       DiagnosticGroups.registerGroup(""globalThis"",
+@@ -120,6 +120,12 @@ public DiagnosticGroup forName(String name) {
+           CheckAccessControls.DEPRECATED_CLASS,
+           CheckAccessControls.DEPRECATED_CLASS_REASON);
+ 
++  public static final DiagnosticGroup TRAILING_UNDERSCORE =
++      DiagnosticGroups.registerGroup(""trailingUnderscore"",  // undocumented
++          CheckJSDocStyle.MUST_BE_PRIVATE,
++          CheckJSDocStyle.MUST_HAVE_TRAILING_UNDERSCORE);
++
++  @Deprecated
+   public static final DiagnosticGroup UNDERSCORE =
+       DiagnosticGroups.registerGroup(""underscore"",  // undocumented
+           CheckJSDocStyle.MUST_BE_PRIVATE,"
+google/closure-compiler,CommandLineRunnerTest,Make tests in CommandLineRunnerTest throw FlagUsageException,internal cleanup | cla: yes,2016-01-30T09:29:16Z,2016-01-30T19:34:52Z,43be2cc20ac3580d871e4a8b967d356625b4346d,Make tests in CommandLineRunnerTest throw FlagUsageException,test/com/google/javascript/jscomp/CommandLineRunnerTest.java,CommandLineRunnerTest.java,modified,52,76,"@@ -1045,98 +1045,74 @@ public void testSourceMapLocationsTranslations3() {
+         .contains(""Bad value for --source_map_location_mapping"");
+   }
+ 
+-  public void testInputOneZip() throws IOException {
+-    try {
+-      LinkedHashMap<String, String> zip1Contents = new LinkedHashMap<>();
+-      zip1Contents.put(""run.js"", ""console.log(\""Hello World\"");"");
+-      FlagEntry<JsSourceType> zipFile1 = createZipFile(zip1Contents);
++  public void testInputOneZip() throws IOException, FlagUsageException {
++    LinkedHashMap<String, String> zip1Contents = new LinkedHashMap<>();
++    zip1Contents.put(""run.js"", ""console.log(\""Hello World\"");"");
++    FlagEntry<JsSourceType> zipFile1 = createZipFile(zip1Contents);
+ 
+-      compileFiles(""console.log(\""Hello World\"");"", zipFile1);
+-    } catch (FlagUsageException e) {
+-      fail(""Unexpected exception"" + e);
+-    }
++    compileFiles(""console.log(\""Hello World\"");"", zipFile1);
+   }
+ 
+-  public void testInputMultipleZips() throws IOException {
+-    try {
+-      LinkedHashMap<String, String> zip1Contents = new LinkedHashMap<>();
+-      zip1Contents.put(""run.js"", ""console.log(\""Hello World\"");"");
+-      FlagEntry<JsSourceType> zipFile1 = createZipFile(zip1Contents);
++  public void testInputMultipleZips() throws IOException, FlagUsageException {
++    LinkedHashMap<String, String> zip1Contents = new LinkedHashMap<>();
++    zip1Contents.put(""run.js"", ""console.log(\""Hello World\"");"");
++    FlagEntry<JsSourceType> zipFile1 = createZipFile(zip1Contents);
+ 
+-      LinkedHashMap<String, String> zip2Contents = new LinkedHashMap<>();
+-      zip2Contents.put(""run.js"", ""window.alert(\""Hi Browser\"");"");
+-      FlagEntry<JsSourceType> zipFile2 = createZipFile(zip2Contents);
++    LinkedHashMap<String, String> zip2Contents = new LinkedHashMap<>();
++    zip2Contents.put(""run.js"", ""window.alert(\""Hi Browser\"");"");
++    FlagEntry<JsSourceType> zipFile2 = createZipFile(zip2Contents);
+ 
+-      compileFiles(
+-          ""console.log(\""Hello World\"");window.alert(\""Hi Browser\"");"", zipFile1, zipFile2);
+-    } catch (FlagUsageException e) {
+-      fail(""Unexpected exception"" + e);
+-    }
++    compileFiles(
++        ""console.log(\""Hello World\"");window.alert(\""Hi Browser\"");"", zipFile1, zipFile2);
+   }
+ 
+-  public void testInputMultipleContents() throws IOException {
+-    try {
+-      LinkedHashMap<String, String> zip1Contents = new LinkedHashMap<>();
+-      zip1Contents.put(""a.js"", ""console.log(\""File A\"");"");
+-      zip1Contents.put(""b.js"", ""console.log(\""File B\"");"");
+-      zip1Contents.put(""c.js"", ""console.log(\""File C\"");"");
+-      FlagEntry<JsSourceType> zipFile1 = createZipFile(zip1Contents);
+-
+-      compileFiles(
+-          ""console.log(\""File A\"");console.log(\""File B\"");console.log(\""File C\"");"", zipFile1);
+-    } catch (FlagUsageException e) {
+-      fail(""Unexpected exception"" + e);
+-    }
++  public void testInputMultipleContents() throws IOException, FlagUsageException {
++    LinkedHashMap<String, String> zip1Contents = new LinkedHashMap<>();
++    zip1Contents.put(""a.js"", ""console.log(\""File A\"");"");
++    zip1Contents.put(""b.js"", ""console.log(\""File B\"");"");
++    zip1Contents.put(""c.js"", ""console.log(\""File C\"");"");
++    FlagEntry<JsSourceType> zipFile1 = createZipFile(zip1Contents);
++
++    compileFiles(
++        ""console.log(\""File A\"");console.log(\""File B\"");console.log(\""File C\"");"", zipFile1);
+   }
+ 
+-  public void testInputMultipleFiles() throws IOException {
+-    try {
+-      LinkedHashMap<String, String> zip1Contents = new LinkedHashMap<>();
+-      zip1Contents.put(""run.js"", ""console.log(\""Hello World\"");"");
+-      FlagEntry<JsSourceType> zipFile1 = createZipFile(zip1Contents);
++  public void testInputMultipleFiles() throws IOException, FlagUsageException {
++    LinkedHashMap<String, String> zip1Contents = new LinkedHashMap<>();
++    zip1Contents.put(""run.js"", ""console.log(\""Hello World\"");"");
++    FlagEntry<JsSourceType> zipFile1 = createZipFile(zip1Contents);
+ 
+-      FlagEntry<JsSourceType> jsFile1 = createJsFile(""testjsfile"", ""var a;"");
++    FlagEntry<JsSourceType> jsFile1 = createJsFile(""testjsfile"", ""var a;"");
+ 
+-      LinkedHashMap<String, String> zip2Contents = new LinkedHashMap<>();
+-      zip2Contents.put(""run.js"", ""window.alert(\""Hi Browser\"");"");
+-      FlagEntry<JsSourceType> zipFile2 = createZipFile(zip2Contents);
++    LinkedHashMap<String, String> zip2Contents = new LinkedHashMap<>();
++    zip2Contents.put(""run.js"", ""window.alert(\""Hi Browser\"");"");
++    FlagEntry<JsSourceType> zipFile2 = createZipFile(zip2Contents);
+ 
+-      compileFiles(
+-          ""console.log(\""Hello World\"");var a;window.alert(\""Hi Browser\"");"",
+-          zipFile1, jsFile1, zipFile2);
+-    } catch (FlagUsageException e) {
+-      fail(""Unexpected exception"" + e);
+-    }
++    compileFiles(
++        ""console.log(\""Hello World\"");var a;window.alert(\""Hi Browser\"");"",
++        zipFile1, jsFile1, zipFile2);
+   }
+ 
+-  public void testGlobJs1() throws IOException {
+-    try {
+-      FlagEntry<JsSourceType> jsFile1 = createJsFile(""test1"", ""var a;"");
+-      FlagEntry<JsSourceType> jsFile2 = createJsFile(""test2"", ""var b;"");
+-      // Move test2 to the same directory as test1, also make the filename of test2
+-      // lexicographically larger than test1
+-      new File(jsFile2.value).renameTo(new File(
+-          new File(jsFile1.value).getParentFile() + File.separator + ""utest2.js""));
+-      String glob = new File(jsFile1.value).getParent() + File.separator + ""**.js"";
+-      compileFiles(
+-          ""var a;var b;"", new FlagEntry<>(JsSourceType.JS, glob));
+-    } catch (FlagUsageException e) {
+-      fail(""Unexpected exception"" + e);
+-    }
++  public void testGlobJs1() throws IOException, FlagUsageException {
++    FlagEntry<JsSourceType> jsFile1 = createJsFile(""test1"", ""var a;"");
++    FlagEntry<JsSourceType> jsFile2 = createJsFile(""test2"", ""var b;"");
++    // Move test2 to the same directory as test1, also make the filename of test2
++    // lexicographically larger than test1
++    new File(jsFile2.value).renameTo(new File(
++        new File(jsFile1.value).getParentFile() + File.separator + ""utest2.js""));
++    String glob = new File(jsFile1.value).getParent() + File.separator + ""**.js"";
++    compileFiles(
++        ""var a;var b;"", new FlagEntry<>(JsSourceType.JS, glob));
+   }
+ 
+-  public void testGlobJs2() throws IOException {
+-    try {
+-      FlagEntry<JsSourceType> jsFile1 = createJsFile(""test1"", ""var a;"");
+-      FlagEntry<JsSourceType> jsFile2 = createJsFile(""test2"", ""var b;"");
+-      new File(jsFile2.value).renameTo(new File(
+-          new File(jsFile1.value).getParentFile() + File.separator + ""utest2.js""));
+-      String glob = new File(jsFile1.value).getParent() + File.separator + ""*test*.js"";
+-      compileFiles(
+-          ""var a;var b;"", new FlagEntry<>(JsSourceType.JS, glob));
+-    } catch (FlagUsageException e) {
+-      fail(""Unexpected exception"" + e);
+-    }
++  public void testGlobJs2() throws IOException, FlagUsageException {
++    FlagEntry<JsSourceType> jsFile1 = createJsFile(""test1"", ""var a;"");
++    FlagEntry<JsSourceType> jsFile2 = createJsFile(""test2"", ""var b;"");
++    new File(jsFile2.value).renameTo(new File(
++        new File(jsFile1.value).getParentFile() + File.separator + ""utest2.js""));
++    String glob = new File(jsFile1.value).getParent() + File.separator + ""*test*.js"";
++    compileFiles(
++        ""var a;var b;"", new FlagEntry<>(JsSourceType.JS, glob));
+   }
+ 
+   public void testSourceMapInputs() throws Exception {"

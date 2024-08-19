@@ -1,0 +1,12 @@
+full_repo_name,class_names,pr_title,labels,created_at,closed_at,commit_sha,commit_message,file_path,file_name,status,additions,deletions,patch
+google/j2objc,ObjectiveCSourceFileGenerator,Fix method parameters > 2 omitted when using mapping file,bug,2014-02-02T03:33:27Z,2014-02-06T03:23:18Z,6a49481425b7aa424d6d02cc51a7c51807fb5d8b,"Fix method parameters > 2 omitted when using mapping file
+
+Change-Id: I603ad1d6af2298cfa850f6e2c13d1fded9f568b7",translator/src/main/java/com/google/devtools/j2objc/gen/ObjectiveCSourceFileGenerator.java,ObjectiveCSourceFileGenerator.java,modified,1,1,"@@ -229,7 +229,7 @@ protected String mappedMethodDeclaration(MethodDeclaration method, IOSMethod map
+       IOSParameter first = iosParameters.next();
+       SingleVariableDeclaration var = parameters.get(first.getIndex());
+       addTypeAndName(first, var, sb);
+-      if (iosParameters.hasNext()) {
++      while (iosParameters.hasNext()) {
+         sb.append(mappedMethod.isVarArgs() ? "", "" : "" "");
+         IOSParameter next = iosParameters.next();
+         sb.append(next.getParameterName());"

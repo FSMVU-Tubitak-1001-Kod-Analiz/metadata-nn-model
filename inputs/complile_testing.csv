@@ -1,0 +1,677 @@
+full_repo_name,class_names,pr_title,labels,created_at,closed_at,commit_sha,commit_message,file_path,file_name,status,additions,deletions,patch
+google/compile-testing,JavaFileObjects | GeneratingProcessor | JavaSourcesSubjectFactoryTest,[Proposal] Use Language annotation for better IDE support,type=enhancement | cla: yes | P3,2019-03-27T22:19:17Z,2020-03-28T00:34:25Z,10176a4a2339397a45677cd54f0e29728db302b1,"[Proposal] Use Language annotation for better IDE support
+
+This is a proposal to use the `@Language` annotation on java sources parameters for better support in the IDE. With this, callers/consumers would get automatic syntax highlighting in intelliJ or anywhere else that understands these annotations. This is used fairly heavily in android lint tooling as well for the same effect.",src/main/java/com/google/testing/compile/JavaFileObjects.java,JavaFileObjects.java,modified,5,2,"@@ -40,6 +40,7 @@
+ import javax.tools.JavaFileObject;
+ import javax.tools.JavaFileObject.Kind;
+ import javax.tools.SimpleJavaFileObject;
++import org.intellij.lang.annotations.Language;
+ 
+ /**
+  * A utility class for creating {@link JavaFileObject} instances.
+@@ -57,7 +58,8 @@ private JavaFileObjects() { }
+    * <p>Note that this method makes no attempt to verify that the name matches the contents of the
+    * source and compilation errors may result if they do not match.
+    */
+-  public static JavaFileObject forSourceString(String fullyQualifiedName, String source) {
++  public static JavaFileObject forSourceString(String fullyQualifiedName,
++      @Language(""JAVA"") String source) {
+     checkNotNull(fullyQualifiedName);
+     if (fullyQualifiedName.startsWith(""package "")) {
+       throw new IllegalArgumentException(
+@@ -96,7 +98,8 @@ private static final class StringSourceJavaFileObject extends SimpleJavaFileObje
+     final String source;
+     final long lastModified;
+ 
+-    StringSourceJavaFileObject(String fullyQualifiedName, String source) {
++    StringSourceJavaFileObject(String fullyQualifiedName,
++        @Language(""JAVA"") String source) {
+       super(createUri(fullyQualifiedName), SOURCE);
+       // TODO(gak): check that fullyQualifiedName looks like a fully qualified class name
+       this.source = source;"
+google/compile-testing,JavaFileObjects | GeneratingProcessor | JavaSourcesSubjectFactoryTest,[Proposal] Use Language annotation for better IDE support,type=enhancement | cla: yes | P3,2019-03-27T22:19:17Z,2020-03-28T00:34:25Z,10176a4a2339397a45677cd54f0e29728db302b1,"[Proposal] Use Language annotation for better IDE support
+
+This is a proposal to use the `@Language` annotation on java sources parameters for better support in the IDE. With this, callers/consumers would get automatic syntax highlighting in intelliJ or anywhere else that understands these annotations. This is used fairly heavily in android lint tooling as well for the same effect.",src/test/java/com/google/testing/compile/GeneratingProcessor.java,GeneratingProcessor.java,modified,3,0,"@@ -29,9 +29,12 @@
+ import javax.annotation.processing.RoundEnvironment;
+ import javax.lang.model.SourceVersion;
+ import javax.lang.model.element.TypeElement;
++import org.intellij.lang.annotations.Language;
+ 
+ final class GeneratingProcessor extends AbstractProcessor {
+   static final String GENERATED_CLASS_NAME = ""Blah"";
++
++  @Language(""JAVA"")
+   static final String GENERATED_SOURCE = ""final class Blah {\n  String blah = \""blah\"";\n}"";
+ 
+   static final String GENERATED_RESOURCE_NAME = ""Foo"";"
+google/compile-testing,JavaFileObjects | GeneratingProcessor | JavaSourcesSubjectFactoryTest,[Proposal] Use Language annotation for better IDE support,type=enhancement | cla: yes | P3,2019-03-27T22:19:17Z,2020-03-28T00:34:25Z,10176a4a2339397a45677cd54f0e29728db302b1,"[Proposal] Use Language annotation for better IDE support
+
+This is a proposal to use the `@Language` annotation on java sources parameters for better support in the IDE. With this, callers/consumers would get automatic syntax highlighting in intelliJ or anywhere else that understands these annotations. This is used fairly heavily in android lint tooling as well for the same effect.",src/test/java/com/google/testing/compile/JavaSourcesSubjectFactoryTest.java,JavaSourcesSubjectFactoryTest.java,modified,3,0,"@@ -30,6 +30,7 @@
+ import java.util.Arrays;
+ import javax.tools.Diagnostic;
+ import javax.tools.JavaFileObject;
++import org.intellij.lang.annotations.Language;
+ import org.junit.Rule;
+ import org.junit.Test;
+ import org.junit.runner.RunWith;
+@@ -810,6 +811,8 @@ public void generatesSources_failOnExtraActual() {
+   @Test
+   public void generatesSources_failWithNoCandidates() {
+     String failingExpectationName = ""ThisIsNotTheRightFile"";
++
++    @Language(""JAVA"")
+     String failingExpectationSource = ""abstract class ThisIsNotTheRightFile {}"";
+     expectFailure
+         .whenTesting()"
+google/compile-testing,JavaFileObjects | GeneratingProcessor | JavaSourcesSubjectFactoryTest,[Proposal] Use Language annotation for better IDE support,type=enhancement | cla: yes | P3,2019-03-27T22:19:17Z,2020-03-28T00:34:25Z,1466d011b2df7c5047ef4d33ffcd20ad3e113191,Remove from private API,src/main/java/com/google/testing/compile/JavaFileObjects.java,JavaFileObjects.java,modified,1,2,"@@ -98,8 +98,7 @@ private static final class StringSourceJavaFileObject extends SimpleJavaFileObje
+     final String source;
+     final long lastModified;
+ 
+-    StringSourceJavaFileObject(String fullyQualifiedName,
+-        @Language(""JAVA"") String source) {
++    StringSourceJavaFileObject(String fullyQualifiedName, String source) {
+       super(createUri(fullyQualifiedName), SOURCE);
+       // TODO(gak): check that fullyQualifiedName looks like a fully qualified class name
+       this.source = source;"
+google/compile-testing,JavaFileObjects | GeneratingProcessor | JavaSourcesSubjectFactoryTest,[Proposal] Use Language annotation for better IDE support,type=enhancement | cla: yes | P3,2019-03-27T22:19:17Z,2020-03-28T00:34:25Z,10176a4a2339397a45677cd54f0e29728db302b1,"[Proposal] Use Language annotation for better IDE support
+
+This is a proposal to use the `@Language` annotation on java sources parameters for better support in the IDE. With this, callers/consumers would get automatic syntax highlighting in intelliJ or anywhere else that understands these annotations. This is used fairly heavily in android lint tooling as well for the same effect.",src/main/java/com/google/testing/compile/JavaFileObjects.java,JavaFileObjects.java,modified,5,2,"@@ -40,6 +40,7 @@
+ import javax.tools.JavaFileObject;
+ import javax.tools.JavaFileObject.Kind;
+ import javax.tools.SimpleJavaFileObject;
++import org.intellij.lang.annotations.Language;
+ 
+ /**
+  * A utility class for creating {@link JavaFileObject} instances.
+@@ -57,7 +58,8 @@ private JavaFileObjects() { }
+    * <p>Note that this method makes no attempt to verify that the name matches the contents of the
+    * source and compilation errors may result if they do not match.
+    */
+-  public static JavaFileObject forSourceString(String fullyQualifiedName, String source) {
++  public static JavaFileObject forSourceString(String fullyQualifiedName,
++      @Language(""JAVA"") String source) {
+     checkNotNull(fullyQualifiedName);
+     if (fullyQualifiedName.startsWith(""package "")) {
+       throw new IllegalArgumentException(
+@@ -96,7 +98,8 @@ private static final class StringSourceJavaFileObject extends SimpleJavaFileObje
+     final String source;
+     final long lastModified;
+ 
+-    StringSourceJavaFileObject(String fullyQualifiedName, String source) {
++    StringSourceJavaFileObject(String fullyQualifiedName,
++        @Language(""JAVA"") String source) {
+       super(createUri(fullyQualifiedName), SOURCE);
+       // TODO(gak): check that fullyQualifiedName looks like a fully qualified class name
+       this.source = source;"
+google/compile-testing,JavaFileObjects | GeneratingProcessor | JavaSourcesSubjectFactoryTest,[Proposal] Use Language annotation for better IDE support,type=enhancement | cla: yes | P3,2019-03-27T22:19:17Z,2020-03-28T00:34:25Z,10176a4a2339397a45677cd54f0e29728db302b1,"[Proposal] Use Language annotation for better IDE support
+
+This is a proposal to use the `@Language` annotation on java sources parameters for better support in the IDE. With this, callers/consumers would get automatic syntax highlighting in intelliJ or anywhere else that understands these annotations. This is used fairly heavily in android lint tooling as well for the same effect.",src/test/java/com/google/testing/compile/GeneratingProcessor.java,GeneratingProcessor.java,modified,3,0,"@@ -29,9 +29,12 @@
+ import javax.annotation.processing.RoundEnvironment;
+ import javax.lang.model.SourceVersion;
+ import javax.lang.model.element.TypeElement;
++import org.intellij.lang.annotations.Language;
+ 
+ final class GeneratingProcessor extends AbstractProcessor {
+   static final String GENERATED_CLASS_NAME = ""Blah"";
++
++  @Language(""JAVA"")
+   static final String GENERATED_SOURCE = ""final class Blah {\n  String blah = \""blah\"";\n}"";
+ 
+   static final String GENERATED_RESOURCE_NAME = ""Foo"";"
+google/compile-testing,JavaFileObjects | GeneratingProcessor | JavaSourcesSubjectFactoryTest,[Proposal] Use Language annotation for better IDE support,type=enhancement | cla: yes | P3,2019-03-27T22:19:17Z,2020-03-28T00:34:25Z,10176a4a2339397a45677cd54f0e29728db302b1,"[Proposal] Use Language annotation for better IDE support
+
+This is a proposal to use the `@Language` annotation on java sources parameters for better support in the IDE. With this, callers/consumers would get automatic syntax highlighting in intelliJ or anywhere else that understands these annotations. This is used fairly heavily in android lint tooling as well for the same effect.",src/test/java/com/google/testing/compile/JavaSourcesSubjectFactoryTest.java,JavaSourcesSubjectFactoryTest.java,modified,3,0,"@@ -30,6 +30,7 @@
+ import java.util.Arrays;
+ import javax.tools.Diagnostic;
+ import javax.tools.JavaFileObject;
++import org.intellij.lang.annotations.Language;
+ import org.junit.Rule;
+ import org.junit.Test;
+ import org.junit.runner.RunWith;
+@@ -810,6 +811,8 @@ public void generatesSources_failOnExtraActual() {
+   @Test
+   public void generatesSources_failWithNoCandidates() {
+     String failingExpectationName = ""ThisIsNotTheRightFile"";
++
++    @Language(""JAVA"")
+     String failingExpectationSource = ""abstract class ThisIsNotTheRightFile {}"";
+     expectFailure
+         .whenTesting()"
+google/compile-testing,JavaFileObjects | GeneratingProcessor | JavaSourcesSubjectFactoryTest,[Proposal] Use Language annotation for better IDE support,type=enhancement | cla: yes | P3,2019-03-27T22:19:17Z,2020-03-28T00:34:25Z,1466d011b2df7c5047ef4d33ffcd20ad3e113191,Remove from private API,src/main/java/com/google/testing/compile/JavaFileObjects.java,JavaFileObjects.java,modified,1,2,"@@ -98,8 +98,7 @@ private static final class StringSourceJavaFileObject extends SimpleJavaFileObje
+     final String source;
+     final long lastModified;
+ 
+-    StringSourceJavaFileObject(String fullyQualifiedName,
+-        @Language(""JAVA"") String source) {
++    StringSourceJavaFileObject(String fullyQualifiedName, String source) {
+       super(createUri(fullyQualifiedName), SOURCE);
+       // TODO(gak): check that fullyQualifiedName looks like a fully qualified class name
+       this.source = source;"
+google/compile-testing,Compilation | CompilationTest | GeneratingProcessor,Provide ClassLoader for loading generated classes and resources,type=enhancement | wontfix | cla: yes,2017-08-27T00:26:06Z,2017-10-10T13:02:14Z,e6513b72ae5499957f11dc68bd92265996fec7d5,"Provide a ClassLoader capable of loading generated classes and resources.
+
+Add `Compilation.classLoader()` method and an overloaded version that takes a parent classloader.",src/main/java/com/google/testing/compile/Compilation.java,Compilation.java,modified,68,0,"@@ -24,12 +24,20 @@
+ import static javax.tools.Diagnostic.Kind.NOTE;
+ import static javax.tools.Diagnostic.Kind.WARNING;
+ import static javax.tools.JavaFileObject.Kind.CLASS;
++import static javax.tools.StandardLocation.CLASS_OUTPUT;
+ import static javax.tools.StandardLocation.SOURCE_OUTPUT;
+ 
+ import com.google.common.collect.ImmutableList;
+ import com.google.common.collect.ImmutableSet;
+ import com.google.common.collect.Sets;
++import com.google.common.io.ByteStreams;
+ import java.io.IOException;
++import java.io.InputStream;
++import java.net.MalformedURLException;
++import java.net.URI;
++import java.net.URL;
++import java.net.URLConnection;
++import java.net.URLStreamHandler;
+ import java.util.Optional;
+ import java.util.stream.Collector;
+ import javax.tools.Diagnostic;
+@@ -203,6 +211,66 @@ public Optional<JavaFileObject> generatedSourceFile(String qualifiedName) {
+     return generatedFile(SOURCE_OUTPUT, packageName, fileName);
+   }
+ 
++  /**
++   * Returns a ClassLoader capable of loading the generated classes and resources.
++   */
++  public ClassLoader classLoader() {
++    return classLoader(ClassLoader.getSystemClassLoader());
++  }
++
++  /**
++   * Returns a ClassLoader with the supplied parent,
++   * capable of loading the generated classes and resources.
++   */
++  public ClassLoader classLoader(ClassLoader parent) {
++    return new ClassLoader(parent) {
++      @Override
++      protected Class<?> findClass(final String name) throws ClassNotFoundException {
++        String path = name.replace(""."", ""/"").concat("".class"");
++        JavaFileObject generatedClass = generatedFile(CLASS_OUTPUT, path).orElse(null);
++        if (generatedClass == null) {
++          return super.findClass(name);
++        }
++        try (InputStream is = generatedClass.openInputStream()) {
++          byte[] classBytes = ByteStreams.toByteArray(is);
++          return defineClass(name, classBytes, 0, classBytes.length);
++        } catch (IOException e) {
++          throw new ClassNotFoundException(name, e);
++        }
++      }
++
++      @Override
++      protected URL findResource(String name) {
++        JavaFileObject generatedResource = generatedFile(CLASS_OUTPUT, name).orElse(null);
++        if (generatedResource == null) {
++          return super.findResource(name);
++        }
++        try {
++          URI uri = generatedResource.toUri();
++          return new URL(""compilation"", """", -1, uri.getPath(), new URLStreamHandler() {
++            @Override
++            protected URLConnection openConnection(URL u) throws IOException {
++              return new URLConnection(u) {
++                @Override
++                public void connect() throws IOException {
++                  connected = true;
++                }
++
++                @Override
++                public InputStream getInputStream() throws IOException {
++                  return generatedResource.openInputStream();
++                }
++              };
++            }
++          });
++        } catch (MalformedURLException e) {
++          // Should never happen, since no validation is performed when stream handler is provided.
++          throw new RuntimeException(e);
++        }
++      }
++    };
++  }
++
+   @Override
+   public String toString() {
+     StringBuilder builder = new StringBuilder();"
+google/compile-testing,Compilation | CompilationTest | GeneratingProcessor,Provide ClassLoader for loading generated classes and resources,type=enhancement | wontfix | cla: yes,2017-08-27T00:26:06Z,2017-10-10T13:02:14Z,e6513b72ae5499957f11dc68bd92265996fec7d5,"Provide a ClassLoader capable of loading generated classes and resources.
+
+Add `Compilation.classLoader()` method and an overloaded version that takes a parent classloader.",src/test/java/com/google/testing/compile/CompilationTest.java,CompilationTest.java,modified,17,0,"@@ -21,9 +21,14 @@
+ import static com.google.testing.compile.CompilationSubject.assertThat;
+ import static com.google.testing.compile.Compiler.javac;
+ import static javax.tools.StandardLocation.SOURCE_OUTPUT;
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertNull;
+ import static org.junit.Assert.fail;
+ 
+ import com.google.common.collect.ImmutableList;
++import com.google.common.io.ByteStreams;
++import java.io.InputStream;
++import java.nio.charset.Charset;
+ import javax.tools.JavaFileObject;
+ import org.junit.Test;
+ import org.junit.runner.RunWith;
+@@ -90,6 +95,18 @@ public void generatedSourceFile() {
+     assertThat(compilation.generatedSourceFile(""test.generated.Blah"")).isPresent();
+   }
+ 
++  @Test
++  public void classLoader() throws Exception {
++    Compiler compiler = compilerWithGenerator();
++    Compilation compilation = compiler.compile(source1, source2);
++    Class generatedClass = compilation.classLoader().loadClass(""test.generated.Blah"");
++    assertThat(generatedClass.getName()).isEqualTo(""test.generated.Blah"");
++    try (InputStream is = compilation.classLoader().getResourceAsStream(""com/google/testing/compile/Foo"")) {
++      assertEquals(""Bar"", new String(ByteStreams.toByteArray(is), Charset.defaultCharset()));
++    }
++    assertNull(compilation.classLoader().getResourceAsStream(""doesnotexist""));
++  }
++
+   private static Compiler compilerWithGenerator() {
+     return javac().withProcessors(new GeneratingProcessor(""test.generated""));
+   }"
+google/compile-testing,Compilation | CompilationTest | GeneratingProcessor,Provide ClassLoader for loading generated classes and resources,type=enhancement | wontfix | cla: yes,2017-08-27T00:26:06Z,2017-10-10T13:02:14Z,e6513b72ae5499957f11dc68bd92265996fec7d5,"Provide a ClassLoader capable of loading generated classes and resources.
+
+Add `Compilation.classLoader()` method and an overloaded version that takes a parent classloader.",src/test/java/com/google/testing/compile/GeneratingProcessor.java,GeneratingProcessor.java,modified,3,0,"@@ -51,6 +51,9 @@ final class GeneratingProcessor extends AbstractProcessor {
+   public synchronized void init(ProcessingEnvironment processingEnv) {
+     Filer filer = processingEnv.getFiler();
+     try (Writer writer = filer.createSourceFile(generatedClassName()).openWriter()) {
++      if (!packageName.isEmpty()) {
++        writer.write(""package "" + packageName + "";\n"");
++      }
+       writer.write(GENERATED_SOURCE);
+     } catch (IOException e) {
+       throw new RuntimeException(e);"
+google/compile-testing,Compilation | CompilationRule | JavaSourcesSubject | ProcessedCompileTesterFactory | JavaSourcesSubjectFactoryTest,Add an ability to pass in compiler configuration options,type=enhancement | cla: yes,2015-02-04T23:31:24Z,2015-02-05T00:40:12Z,944eb2052e2cb2ce0bb6258fa9b33a272a0f7607,"Add an ability to pass in compiler configuration options (say, to configure annotation processors' flags).
+-------------
+Created by MOE: http://code.google.com/p/moe-java
+MOE_MIGRATED_REVID=85151739",src/main/java/com/google/testing/compile/Compilation.java,Compilation.java,modified,3,2,"@@ -32,6 +32,7 @@
+ import java.io.IOException;
+ import java.util.List;
+ import java.util.Locale;
++import java.util.Set;
+ 
+ import javax.annotation.processing.Processor;
+ import javax.tools.Diagnostic;
+@@ -55,7 +56,7 @@ private Compilation() {}
+    * @throws RuntimeException if compilation fails.
+    */
+   static Result compile(Iterable<? extends Processor> processors,
+-      Iterable<? extends JavaFileObject> sources) {
++      Set<String> options, Iterable<? extends JavaFileObject> sources) {
+     JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+     if (compiler == null) {
+       throw new IllegalStateException(""Java Compiler is not present. ""
+@@ -69,7 +70,7 @@ static Result compile(Iterable<? extends Processor> processors,
+         null, // explicitly use the default because old versions of javac log some output on stderr
+         fileManager,
+         diagnosticCollector,
+-        ImmutableSet.<String>of(),
++        ImmutableSet.copyOf(options),
+         ImmutableSet.<String>of(),
+         sources);
+     task.setProcessors(processors);"
+google/compile-testing,Compilation | CompilationRule | JavaSourcesSubject | ProcessedCompileTesterFactory | JavaSourcesSubjectFactoryTest,Add an ability to pass in compiler configuration options,type=enhancement | cla: yes,2015-02-04T23:31:24Z,2015-02-05T00:40:12Z,944eb2052e2cb2ce0bb6258fa9b33a272a0f7607,"Add an ability to pass in compiler configuration options (say, to configure annotation processors' flags).
+-------------
+Created by MOE: http://code.google.com/p/moe-java
+MOE_MIGRATED_REVID=85151739",src/main/java/com/google/testing/compile/CompilationRule.java,CompilationRule.java,modified,1,0,"@@ -88,6 +88,7 @@ public boolean process(Set<? extends TypeElement> annotations,
+             return false;
+           }
+         }),
++        ImmutableSet.<String>of(),
+         // just compile _something_
+         ImmutableList.of(JavaFileObjects.forSourceLines(""Dummy"", ""final class Dummy {}"")));
+         checkState(result.successful(), result);"
+google/compile-testing,Compilation | CompilationRule | JavaSourcesSubject | ProcessedCompileTesterFactory | JavaSourcesSubjectFactoryTest,Add an ability to pass in compiler configuration options,type=enhancement | cla: yes,2015-02-04T23:31:24Z,2015-02-05T00:40:12Z,944eb2052e2cb2ce0bb6258fa9b33a272a0f7607,"Add an ability to pass in compiler configuration options (say, to configure annotation processors' flags).
+-------------
+Created by MOE: http://code.google.com/p/moe-java
+MOE_MIGRATED_REVID=85151739",src/main/java/com/google/testing/compile/JavaSourcesSubject.java,JavaSourcesSubject.java,modified,30,2,"@@ -29,6 +29,7 @@
+ import com.google.common.collect.Iterables;
+ import com.google.common.collect.Lists;
+ import com.google.common.collect.Maps;
++import com.google.common.collect.Sets;
+ import com.google.common.io.ByteSource;
+ import com.google.common.truth.FailureStrategy;
+ import com.google.common.truth.Subject;
+@@ -37,7 +38,9 @@
+ import com.sun.source.tree.CompilationUnitTree;
+ 
+ import java.io.IOException;
++import java.util.Arrays;
+ import java.util.Map;
++import java.util.Set;
+ 
+ import javax.annotation.processing.Processor;
+ import javax.tools.Diagnostic;
+@@ -56,9 +59,23 @@
+ public final class JavaSourcesSubject
+     extends Subject<JavaSourcesSubject, Iterable<? extends JavaFileObject>>
+     implements CompileTester, ProcessedCompileTesterFactory {
++  private final Set<String> options = Sets.newHashSet();
++  
+   JavaSourcesSubject(FailureStrategy failureStrategy, Iterable<? extends JavaFileObject> subject) {
+     super(failureStrategy, subject);
+   }
++  
++  @Override
++  public ProcessedCompileTesterFactory withCompilerOptions(Iterable<String> options) {
++    Iterables.addAll(this.options, options);
++    return this;
++  }
++  
++  @Override
++  public ProcessedCompileTesterFactory withCompilerOptions(String... options) {
++    this.options.addAll(Arrays.asList(options));
++    return this;
++  }
+ 
+   @Override
+   public CompileTester processedWith(Processor first, Processor... rest) {
+@@ -261,7 +278,8 @@ private void failWithCandidate(JavaFileObject expectedSource,
+ 
+     @Override
+     public SuccessfulCompilationClause compilesWithoutError() {
+-      Compilation.Result result = Compilation.compile(processors, getSubject());
++      Compilation.Result result =
++          Compilation.compile(processors, ImmutableSet.copyOf(options), getSubject());
+       if (!result.successful()) {
+         ImmutableList<Diagnostic<? extends JavaFileObject>> errors =
+             result.diagnosticsByKind().get(Kind.ERROR);
+@@ -279,7 +297,7 @@ public SuccessfulCompilationClause compilesWithoutError() {
+ 
+     @Override
+     public UnsuccessfulCompilationClause failsToCompile() {
+-      Result result = Compilation.compile(processors, getSubject());
++      Result result = Compilation.compile(processors, ImmutableSet.copyOf(options), getSubject());
+       if (result.successful()) {
+         String message = Joiner.on('\n').join(
+             ""Compilation was expected to fail, but contained no errors."",
+@@ -543,6 +561,16 @@ public static final class SingleSourceAdapter
+       this.delegate =
+           new JavaSourcesSubject(failureStrategy, ImmutableList.of(subject));
+     }
++    
++    @Override
++    public ProcessedCompileTesterFactory withCompilerOptions(Iterable<String> options) {
++      return delegate.withCompilerOptions(options);
++    }
++    
++    @Override
++    public ProcessedCompileTesterFactory withCompilerOptions(String... options) {
++      return delegate.withCompilerOptions(options);
++    }    
+ 
+     @Override
+     public CompileTester processedWith(Processor first, Processor... rest) {"
+google/compile-testing,Compilation | CompilationRule | JavaSourcesSubject | ProcessedCompileTesterFactory | JavaSourcesSubjectFactoryTest,Add an ability to pass in compiler configuration options,type=enhancement | cla: yes,2015-02-04T23:31:24Z,2015-02-05T00:40:12Z,944eb2052e2cb2ce0bb6258fa9b33a272a0f7607,"Add an ability to pass in compiler configuration options (say, to configure annotation processors' flags).
+-------------
+Created by MOE: http://code.google.com/p/moe-java
+MOE_MIGRATED_REVID=85151739",src/main/java/com/google/testing/compile/ProcessedCompileTesterFactory.java,ProcessedCompileTesterFactory.java,modified,7,0,"@@ -25,6 +25,13 @@
+  * @author Gregory Kick
+  */
+ public interface ProcessedCompileTesterFactory {
++
++  /** Adds options that will be passed to the compiler. */
++  @CheckReturnValue ProcessedCompileTesterFactory withCompilerOptions(Iterable<String> options);
++  
++  /** Adds options that will be passed to the compiler. */
++  @CheckReturnValue ProcessedCompileTesterFactory withCompilerOptions(String... options);
++  
+   /** Adds {@linkplain Processor annotation processors} to the compilation being tested.  */
+   @CheckReturnValue
+   CompileTester processedWith(Processor first, Processor... rest);"
+google/compile-testing,Compilation | CompilationRule | JavaSourcesSubject | ProcessedCompileTesterFactory | JavaSourcesSubjectFactoryTest,Add an ability to pass in compiler configuration options,type=enhancement | cla: yes,2015-02-04T23:31:24Z,2015-02-05T00:40:12Z,944eb2052e2cb2ce0bb6258fa9b33a272a0f7607,"Add an ability to pass in compiler configuration options (say, to configure annotation processors' flags).
+-------------
+Created by MOE: http://code.google.com/p/moe-java
+MOE_MIGRATED_REVID=85151739",src/test/java/com/google/testing/compile/JavaSourcesSubjectFactoryTest.java,JavaSourcesSubjectFactoryTest.java,modified,10,0,"@@ -15,6 +15,7 @@
+  */
+ package com.google.testing.compile;
+ 
++import static com.google.common.truth.Truth.assertAbout;
+ import static com.google.common.truth.Truth.assertThat;
+ import static com.google.common.truth.Truth.assert_;
+ import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
+@@ -27,6 +28,7 @@
+ import com.google.common.io.Resources;
+ import com.google.common.truth.FailureStrategy;
+ import com.google.common.truth.TestVerb;
++import com.google.common.truth.Truth;
+ 
+ import org.junit.Test;
+ import org.junit.runner.RunWith;
+@@ -35,6 +37,7 @@
+ import java.io.IOException;
+ import java.io.Writer;
+ import java.util.Arrays;
++import java.util.Map;
+ import java.util.Set;
+ 
+ import javax.annotation.processing.AbstractProcessor;
+@@ -517,7 +520,14 @@ public SourceVersion getSupportedSourceVersion() {
+ 
+   private static final class NoOpProcessor extends AbstractProcessor {
+     boolean invoked = false;
++    Map<String, String> options;
+ 
++    @Override
++    public synchronized void init(ProcessingEnvironment processingEnv) {
++      super.init(processingEnv);
++      options = processingEnv.getOptions();
++    }
++    
+     @Override
+     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+       invoked = true;"
+google/compile-testing,CompileTester | JavaSourcesSubject | JavaSourcesSubjectFactoryTest,add a mechanism to test filenames + contents of files produced,type=enhancement | cla: yes,2015-02-04T21:58:32Z,2015-02-05T00:36:44Z,60c5e53f3a742a0d3dc475a95daba74edf2f6c83,"add a mechanism to test filenames + contents of files produced. generatesFileNamed(<file info>).withContents(<file>) can replace generatesFiles(<file>, <files>) in contexts that the name or number of files is important
+-------------
+Created by MOE: http://code.google.com/p/moe-java
+MOE_MIGRATED_REVID=80419704",src/main/java/com/google/testing/compile/CompileTester.java,CompileTester.java,modified,19,1,"@@ -15,7 +15,10 @@
+  */
+ package com.google.testing.compile;
+ 
++import com.google.common.io.ByteSource;
++
+ import javax.tools.Diagnostic;
++import javax.tools.JavaFileManager;
+ import javax.tools.JavaFileObject;
+ 
+ /**
+@@ -78,10 +81,25 @@ public interface GeneratedPredicateClause {
+     SuccessfulCompilationClause generatesSources(JavaFileObject first, JavaFileObject... rest);
+ 
+     /**
+-     * Checks that a file with equivalent path and content was generated for each of the given
++     * Checks that a file with equivalent kind and content was generated for each of the given
+      * {@linkplain JavaFileObject files}.
+      */
+     SuccessfulCompilationClause generatesFiles(JavaFileObject first, JavaFileObject... rest);
++
++    /**
++     * Checks that a file with the specified location, package, and filename was generated.
++     */
++    SuccessfulFileClause generatesFileNamed(
++        JavaFileManager.Location location, String packageName, String relativeName);
++  }
++
++  /** The clause in the fluent API that checks that a generated file has the specified contents. */
++  public interface SuccessfulFileClause extends ChainingClause<GeneratedPredicateClause> {
++    /**
++     * Checks that the contents of the generated file match the contents of the specified
++     * {@link ByteSource}.
++     */
++    SuccessfulFileClause withContents(ByteSource expectedByteSource);
+   }
+ 
+   /** The clause in the fluent API for further tests on successful compilations. */"
+google/compile-testing,CompileTester | JavaSourcesSubject | JavaSourcesSubjectFactoryTest,add a mechanism to test filenames + contents of files produced,type=enhancement | cla: yes,2015-02-04T21:58:32Z,2015-02-05T00:36:44Z,60c5e53f3a742a0d3dc475a95daba74edf2f6c83,"add a mechanism to test filenames + contents of files produced. generatesFileNamed(<file info>).withContents(<file>) can replace generatesFiles(<file>, <files>) in contexts that the name or number of files is important
+-------------
+Created by MOE: http://code.google.com/p/moe-java
+MOE_MIGRATED_REVID=80419704",src/main/java/com/google/testing/compile/JavaSourcesSubject.java,JavaSourcesSubject.java,modified,59,0,"@@ -43,6 +43,7 @@
+ import javax.tools.Diagnostic;
+ import javax.tools.Diagnostic.Kind;
+ import javax.tools.FileObject;
++import javax.tools.JavaFileManager;
+ import javax.tools.JavaFileObject;
+ 
+ /**
+@@ -472,6 +473,64 @@ boolean wasGenerated(Compilation.Result result, JavaFileObject expected) {
+       }
+       return false;
+     }
++
++    @Override
++    public SuccessfulFileClause generatesFileNamed(
++        JavaFileManager.Location location, String packageName, String relativeName) {
++      // TODO(gak): Validate that these inputs aren't null, location is an output location, and
++      // packageName is a valid package name.
++      // We're relying on the implementation of location.getName() to be equivalent to the path of
++      // the location.
++      String expectedFilename = new StringBuilder(location.getName()).append('/')
++          .append(packageName.replace('.', '/')).append('/').append(relativeName).toString();
++
++      for (JavaFileObject generated : result.generatedFilesByKind().values()) {
++        if (generated.toUri().getPath().endsWith(expectedFilename)) {
++          return new SuccessfulFileBuilder(this, generated.toUri().getPath(),
++              JavaFileObjects.asByteSource(generated));
++        }
++      }
++      StringBuilder encounteredFiles = new StringBuilder();
++      for (JavaFileObject generated : result.generatedFilesByKind().values()) {
++        if (generated.toUri().getPath().contains(location.getName())) {
++          encounteredFiles.append(""  "").append(generated.toUri().getPath()).append('\n');
++        }
++      }
++      failureStrategy.fail(""Did not find a generated file corresponding to "" + relativeName
++          + "" in package "" + packageName + ""; Found: "" + encounteredFiles.toString());
++      return new SuccessfulFileBuilder(this, null, null);
++    }
++  }
++
++  private final class SuccessfulFileBuilder implements SuccessfulFileClause {
++    private final SuccessfulCompilationBuilder compilationClause;
++    private final String generatedFilePath;
++    private final ByteSource generatedByteSource;
++
++    SuccessfulFileBuilder(SuccessfulCompilationBuilder compilationClause, String generatedFilePath,
++        ByteSource generatedByteSource) {
++      this.compilationClause = compilationClause;
++      this.generatedFilePath = generatedFilePath;
++      this.generatedByteSource = generatedByteSource;
++    }
++
++    @Override
++    public GeneratedPredicateClause and() {
++      return compilationClause;
++    }
++
++    @Override
++    public SuccessfulFileClause withContents(ByteSource expectedByteSource) {
++      try {
++        if (!expectedByteSource.contentEquals(generatedByteSource)) {
++          failureStrategy.fail(""The contents in "" + generatedFilePath
++              + "" did not match the expected contents"");
++        }
++      } catch (IOException e) {
++        throw new RuntimeException(e);
++      }
++      return this;
++    }
+   }
+ 
+   public static final class SingleSourceAdapter"
+google/compile-testing,CompileTester | JavaSourcesSubject | JavaSourcesSubjectFactoryTest,add a mechanism to test filenames + contents of files produced,type=enhancement | cla: yes,2015-02-04T21:58:32Z,2015-02-05T00:36:44Z,60c5e53f3a742a0d3dc475a95daba74edf2f6c83,"add a mechanism to test filenames + contents of files produced. generatesFileNamed(<file info>).withContents(<file>) can replace generatesFiles(<file>, <files>) in contexts that the name or number of files is important
+-------------
+Created by MOE: http://code.google.com/p/moe-java
+MOE_MIGRATED_REVID=80419704",src/test/java/com/google/testing/compile/JavaSourcesSubjectFactoryTest.java,JavaSourcesSubjectFactoryTest.java,modified,60,0,"@@ -19,8 +19,11 @@
+ import static com.google.common.truth.Truth.assert_;
+ import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
+ import static org.junit.Assert.fail;
++import static java.nio.charset.StandardCharsets.UTF_8;
++import static javax.tools.StandardLocation.CLASS_OUTPUT;
+ 
+ import com.google.common.collect.ImmutableSet;
++import com.google.common.io.ByteSource;
+ import com.google.common.io.Resources;
+ import com.google.common.truth.FailureStrategy;
+ import com.google.common.truth.TestVerb;
+@@ -363,6 +366,50 @@ public void generatesSources_failWithNoCandidates() {
+     }
+   }
+ 
++  @Test
++  public void generatesFileNamed() {
++    assert_().about(javaSource())
++        .that(JavaFileObjects.forResource(""HelloWorld.java""))
++        .processedWith(new GeneratingProcessor())
++        .compilesWithoutError()
++        .and()
++        .generatesFileNamed(CLASS_OUTPUT, ""com.google.testing.compile"", ""Foo"")
++        .withContents(ByteSource.wrap(""Bar"".getBytes(UTF_8)));
++  }
++
++  @Test
++  public void generatesFileNamed_failOnFileExistence() {
++    try {
++      VERIFY.about(javaSource())
++          .that(JavaFileObjects.forResource(""HelloWorld.java""))
++          .processedWith(new GeneratingProcessor())
++          .compilesWithoutError()
++          .and()
++          .generatesFileNamed(CLASS_OUTPUT, ""com.google.testing.compile"", ""Bogus"")
++          .withContents(ByteSource.wrap(""Bar"".getBytes(UTF_8)));
++    } catch (VerificationException expected) {
++      assertThat(expected.getMessage())
++          .contains(""Did not find a generated file corresponding to Bogus"");
++      assertThat(expected.getMessage()).contains(GeneratingProcessor.GENERATED_RESOURCE_NAME);
++    }
++  }
++
++  @Test
++  public void generatesFileNamed_failOnFileContents() {
++    try {
++      VERIFY.about(javaSource())
++          .that(JavaFileObjects.forResource(""HelloWorld.java""))
++          .processedWith(new GeneratingProcessor())
++          .compilesWithoutError()
++          .and()
++          .generatesFileNamed(CLASS_OUTPUT, ""com.google.testing.compile"", ""Foo"")
++          .withContents(ByteSource.wrap(""Bogus"".getBytes(UTF_8)));
++    } catch (VerificationException expected) {
++      assertThat(expected.getMessage()).contains(""Foo"");
++      assertThat(expected.getMessage()).contains("" did not match the expected contents"");
++    }
++  }
++
+   @Test
+   public void invokesMultipleProcesors() {
+     NoOpProcessor noopProcessor1 = new NoOpProcessor();
+@@ -396,6 +443,9 @@ private static final class GeneratingProcessor extends AbstractProcessor {
+     static final String GENERATED_CLASS_NAME = ""Blah"";
+     static final String GENERATED_SOURCE = ""final class Blah {\n  String blah = \""blah\"";\n}"";
+ 
++    static final String GENERATED_RESOURCE_NAME = ""Foo"";
++    static final String GENERATED_RESOURCE = ""Bar"";
++
+     @Override
+     public synchronized void init(ProcessingEnvironment processingEnv) {
+       try {
+@@ -406,6 +456,16 @@ public synchronized void init(ProcessingEnvironment processingEnv) {
+       } catch (IOException e) {
+         throw new RuntimeException(e);
+       }
++
++      try {
++        Writer writer = processingEnv.getFiler().createResource(CLASS_OUTPUT,
++            JavaSourcesSubjectFactoryTest.class.getPackage().getName(), GENERATED_RESOURCE_NAME)
++            .openWriter();
++        writer.write(GENERATED_RESOURCE);
++        writer.close();
++      } catch (IOException e) {
++        throw new RuntimeException(e);
++      }
+     }
+ 
+     @Override"
