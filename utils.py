@@ -7,21 +7,24 @@ def merge_csv_files_in_directory(directory="inputs"):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     directory_path = os.path.join(script_dir, directory)
     
-    # Search for all CSV files in the specified directory
-    csv_files = glob.glob(os.path.join(directory_path, "*.csv"))
+    # Initialize a list to hold all found CSV files
+    csv_files = []
+    
+    # Recursively search for all CSV files in the specified directory and its subdirectories
+    for root, dirs, files in os.walk(directory_path):
+        csv_files.extend(glob.glob(os.path.join(root, "*.csv")))
 
     if not csv_files:
-        print("No CSV files found in the directory!")
+        print("No CSV files found in the directory or its subdirectories!")
         return
 
-    # Tüm CSV dosyalarını birleştir
+    # Read all CSV files and merge them
     dataframes = [pd.read_csv(file) for file in csv_files]
     merged_df = pd.concat(dataframes, ignore_index=True)
 
-    # Birleştirilmiş dosyayı kaydet
+    # Save the merged file
     merged_df.to_csv('merged.csv', index=False)
     print(f"Files have been merged and saved as merged.csv")
-
 
     return merged_df
 
