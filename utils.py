@@ -48,3 +48,31 @@ def standardize_labels(dataframe, keywords):
     dataframe = dataframe.dropna(subset=['labels'])
 
     return dataframe
+
+# Does string processing on a patch value and turns it into before and after code
+def extract_code_from_patch(patch):
+    before_lines = []
+    after_lines = []
+
+    for line in patch.splitlines():
+        if line.startswith('@@'):
+            # Split the line at the second '@@' and keep only the code part
+            code_part = line.split('@@', 2)[-1].strip()
+            if code_part:
+                before_lines.append(code_part)
+                after_lines.append(code_part)
+        elif line.startswith('-'):
+            # Line removed in the after version, add to before version
+            before_lines.append(line[1:])
+        elif line.startswith('+'):
+            # Line added in the after version, add to after version
+            after_lines.append(line[1:])
+        else:
+            # Line unchanged, add to both versions
+            before_lines.append(line)
+            after_lines.append(line)
+
+    before_code = '\n'.join(before_lines)
+    after_code = '\n'.join(after_lines)
+
+    return before_code, after_code
