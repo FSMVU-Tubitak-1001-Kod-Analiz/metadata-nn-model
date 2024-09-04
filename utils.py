@@ -1,4 +1,5 @@
 import pandas as pd
+import torch
 import os
 import glob
 
@@ -76,3 +77,24 @@ def extract_code_from_patch(patch):
     after_code = '\n'.join(after_lines)
 
     return before_code, after_code
+
+
+# Load all embeddings from the specified directory
+def load_embeddings_from_directory(directory_path):
+
+    embeddings = []
+
+    # List all files in the directory
+    for file_name in os.listdir(directory_path):
+        file_path = os.path.join(directory_path, file_name)
+
+        # Check if it's a file and ends with .pt
+        if os.path.isfile(file_path) and file_path.endswith('.pt'):
+            try:
+                # Load the tensor from file
+                embedding = torch.load(file_path)
+                embeddings.append(embedding)
+            except Exception as e:
+                print(f"Error loading file {file_path}: {e}")
+
+    return embeddings
