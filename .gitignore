@@ -1,4 +1,6 @@
 __pycache__/utils.cpython-312.pyc
 merged.csv
 inputs/
+embeddings/
+embeddings_for_inputs_with_code.tar.gz
 .ipynb_checkpoints/
