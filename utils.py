@@ -2,6 +2,8 @@ import pandas as pd
 import torch
 import os
 import glob
+import re
+import tqdm
 
 def merge_csv_files_in_directory(directory="inputs"):
     # Get the absolute path of the directory relative to the script's location
@@ -83,9 +85,14 @@ def extract_code_from_patch(patch):
 def load_embeddings_from_directory(directory_path):
 
     embeddings = []
+    files = os.listdir(directory_path)
+
+    # Sort the files based on the number in the filename
+    files.sort(key=lambda f: int(re.search(r'\d+', f).group()))
 
     # List all files in the directory
-    for file_name in os.listdir(directory_path):
+    for file_name in tqdm.tqdm_notebook(files):
+        print(file_name)
         file_path = os.path.join(directory_path, file_name)
 
         # Check if it's a file and ends with .pt
