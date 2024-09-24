@@ -22,7 +22,7 @@ def merge_csv_files_in_directory(directory="inputs"):
         return
 
     # Read all CSV files and merge them
-    dataframes = [pd.read_csv(file) for file in csv_files]
+    dataframes = [pd.read_csv(file) for file in tqdm.notebook.tqdm(csv_files)]
     merged_df = pd.concat(dataframes, ignore_index=True)
     
     merged_df['index'] = range(len(merged_df))
@@ -186,3 +186,14 @@ def prepare_dataframe(file_path):
 
     return df
         
+
+def load_embeddings_from_directory_for_df(directory_path, df):
+    embeddings = []
+    for index in df['index'].values:
+        embedding = load_embedding_from_directory(directory_path=directory_path, index)
+        embeddings.append(embedding)
+
+    df['embedding'] = embeddings
+
+    return df
+
