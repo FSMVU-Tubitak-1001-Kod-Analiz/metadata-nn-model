@@ -4,6 +4,8 @@ import os
 import glob
 import re
 import tqdm
+import numpy as np
+import gc
 
 def merge_csv_files_in_directory(directory="inputs"):
     # Get the absolute path of the directory relative to the script's location
@@ -22,7 +24,7 @@ def merge_csv_files_in_directory(directory="inputs"):
         return
 
     # Read all CSV files and merge them
-    dataframes = [pd.read_csv(file) for file in tqdm.notebook.tqdm(csv_files)]
+    dataframes = [pd.read_csv(file) for file in tqdm.tqdm_notebook(csv_files)]
     merged_df = pd.concat(dataframes, ignore_index=True)
     
     merged_df['index'] = range(len(merged_df))
@@ -111,7 +113,7 @@ def load_embeddings_from_directory(directory_path):
 def load_embedding_from_directory(directory_path, id_number):
 
     # Build the search pattern
-    pattern = os.path.join(directory_path, f"embedding_{id_number}_*.pt")
+    pattern = os.path.join(directory_path, f"embedding_{id_number}.pt")
 
     # Find files matching the pattern
     matching_files = glob.glob(pattern)
@@ -120,7 +122,7 @@ def load_embedding_from_directory(directory_path, id_number):
         # Assuming there's only one matching file, load the first match
         file_to_load = matching_files[0]
 
-        embedding = torch.load(file_to_load)
+        embedding = torch.load(file_to_load, map_location='cpu')
     else:
         print(f"No file found for ID {id_number}")
 
@@ -188,12 +190,18 @@ def prepare_dataframe(file_path):
         
 
 def load_embeddings_from_directory_for_df(directory_path, df):
-    embeddings = []
-    for index in df['index'].values:
-        embedding = load_embedding_from_directory(directory_path=directory_path, index)
-        embeddings.append(embedding)
 
-    df['embedding'] = embeddings
+    df['embedding'] = [None] * len(df)
 
+    for index in tqdm.tqdm_notebook(df['index'].values):
+        embedding = load_embedding_from_directory(directory_path=directory_path, id_number=index)
+        embedding_flatten = torch.flatten(embedding)
+        
+        embedding.to('cpu')
+        embedding_flatten.to('cpu')
+        
+        idx = df.loc[df['index'] == index].index
+        df.at[idx[0], 'embedding']= embedding_flatten
+        
     return df
 
