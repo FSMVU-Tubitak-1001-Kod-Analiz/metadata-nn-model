@@ -128,37 +128,33 @@ def load_embedding_from_directory(directory_path, id_number):
 
     return embedding
 
-def prepare_dataframe(file_path):
+def prepare_dataframe(file_path, shouldBalance, should_merge_csv, columns_to_keep):
+    if should_merge_csv:
+        merge_csv_files_in_directory()
+   
     df = pd.read_csv(file_path)
-    # df = merge_csv_files_in_directory()
 
-    #remove duplicates
+    # Remove duplicates
     df = df.drop_duplicates(keep='first')
 
-    df.drop("pr_title",inplace = True,axis=1)
-    df.drop("class_names",inplace = True,axis=1)
-    df.drop("commit_sha",inplace = True,axis=1)
-    df.drop("commit_message",inplace = True,axis=1)
-    df.drop("file_path",inplace = True,axis=1)
-    df.drop("additions",inplace = True,axis=1)
-    df.drop("deletions",inplace = True,axis=1)
-    df.drop("file_name",inplace = True,axis=1)
-    # df.drop("full_repo_name",inplace = True,axis=1)
-
-    df.drop("content_before",inplace = True,axis=1)
-    df.drop("content_after",inplace = True,axis=1)
-
-    # df.drop("patch",inplace = True,axis=1)
-
-    df.drop("created_at",inplace = True,axis=1)
-    df.drop("closed_at",inplace = True,axis=1)
-    df.drop("status",inplace = True,axis=1)
+    # Drop unnecessary columns
+    columns_to_drop = [
+        "pr_title", "class_names", "commit_sha", "commit_message", 
+        "file_path", "additions", "deletions", "file_name", 
+        "content_before", "content_after", "patch", 
+        "created_at", "closed_at", "status"
+    ]
+    
+    # Exclude columns to keep from the drop list
+    columns_to_drop = [col for col in columns_to_drop if col not in columns_to_keep]
+    
+    df.drop(columns=columns_to_drop, inplace=True, axis=1)
 
     # Standardize labels
     labels = ['bug', 'enhancement', 'performance', 'refactor', 'clean']
     df = standardize_labels(df, labels)
 
-    # Count the occurrences of each unique value in the 'lables' column
+    # Count the occurrences of each unique value in the 'labels' column
     label_counts = df['labels'].value_counts()
     print(label_counts)
 
@@ -166,28 +162,29 @@ def prepare_dataframe(file_path):
     label_enh = df[df['labels'] == 'enhancement']
     label_bug = df[df['labels'] == 'bug']
     label_cln = df[df['labels'] == 'clean']
-    # label_prf = df[df['labels'] == 'performance']
-    # label_ref = df[df['labels'] == 'refactor']
-    sampled_enh = label_enh.sample(n=15300, random_state=1)
-    sampled_bug = label_bug.sample(n=15300, random_state=1)
-    sampled_cln = label_cln.sample(n=15300, random_state=1)
-    # sampled_prf = label_prf.sample(n=3200, random_state=1)
-    # sampled_ref = label_ref.sample(n=3200, random_state=1)
+    
+    if shouldBalance:
+        df = filterForEqualLabelCount(df)
+    else:
+        sampled_enh = label_enh
+        sampled_bug = label_bug
+        sampled_cln = label_cln
+
     df = pd.concat([sampled_enh, sampled_bug, sampled_cln])
 
-    # # Filter NaN rows
-    # df = df.dropna(subset=['content_before', 'content_after'])
-    df = df.dropna(subset=['patch'])
+    # Filter NaN rows based on the "patch" column (if it's kept)
+    if 'patch' in df.columns:
+        df = df.dropna(subset=['patch'])
 
-    # Display DataFrame with a scrollable table
-    #display(HTML(df.to_html(max_rows=None, max_cols=None)))
+    # Display DataFrame with a scrollable table (optional)
+    # display(HTML(df.to_html(max_rows=None, max_cols=None)))
 
-    # Count the occurrences of each unique value in the 'lables' column
+    # Count the occurrences of each unique value in the 'labels' column
     label_counts = df['labels'].value_counts()
     print(label_counts)
 
     return df
-        
+
 
 def load_embeddings_from_directory_for_df(directory_path, df):
 
@@ -205,3 +202,52 @@ def load_embeddings_from_directory_for_df(directory_path, df):
         
     return df
 
+
+
+def load_and_concat_embeddings_from_directories(directory_path_1, directory_path_2, df):
+   
+    # Initialize the 'embedding' column with None values
+    df['embedding'] = [None] * len(df)
+    
+    for index in tqdm.tqdm_notebook(df['index'].values):
+        # Load embeddings from the first directory
+        embedding_1 = load_embedding_from_directory(directory_path=directory_path_1, id_number=index)
+        embedding_1_flatten = torch.flatten(embedding_1)
+        
+        # Load embeddings from the second directory
+        embedding_2 = load_embedding_from_directory(directory_path=directory_path_2, id_number=index)
+        embedding_2_flatten = torch.flatten(embedding_2)
+        
+        # Move to CPU and concatenate embeddings
+        embedding_1_flatten.to('cpu')
+        embedding_2_flatten.to('cpu')
+        concatenated_embedding = torch.cat((embedding_1_flatten, embedding_2_flatten), dim=0)
+        
+        # Assign concatenated embedding to the DataFrame
+        idx = df.loc[df['index'] == index].index
+        df.at[idx[0], 'embedding'] = concatenated_embedding
+        
+    return df
+
+
+def filterRepoName(df,nameToFilter):
+    df = df[df['full_repo_name'].str.contains(nameToFilter, case=False, na=False)]
+    return df
+
+def filterForEqualLabelCount(df):     
+    
+    labels = ['bug', 'enhancement', 'performance', 'refactor', 'clean']
+    df = standardize_labels(df, labels)
+
+    # Test için veri setini dengeleme
+    label_enh = df[df['labels'] == 'enhancement']
+    label_bug = df[df['labels'] == 'bug']
+    label_cln = df[df['labels'] == 'clean']
+
+    min_samples = min(len(label_enh), len(label_bug), len(label_cln))
+    print (min_samples)
+    sampled_enh = label_enh.sample(n=min_samples, random_state=1)
+    sampled_bug = label_bug.sample(n=min_samples, random_state=1)
+    sampled_cln = label_cln.sample(n=min_samples, random_state=1)
+    df = pd.concat([sampled_enh, sampled_bug, sampled_cln])
+    return df

@@ -3,7 +3,6 @@ __pycache__/
 inputs/
 embeddings/
 models/
-scalers/
 embeddings_for_inputs_with_code.tar.gz
 .ipynb_checkpoints/
 
