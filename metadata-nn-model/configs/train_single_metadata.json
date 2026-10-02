@@ -1,0 +1,93 @@
+{
+  "_comment": "Step 3b. pr_title / commit_message are deliberately NOT in metadata.columns: they can restate the label (data leakage).",
+  "pipeline": "metadata",
+  "seed": 42,
+  "device": "auto",
+  "input_csv": "data/processed/merged_no_license_no_empty_only_apache_balanced_45993.csv",
+  "label_column": "labels",
+  "metadata": {
+    "model_name": "bert-base-uncased",
+    "columns": [
+      "full_repo_name",
+      "file_path",
+      "additions",
+      "deletions"
+    ],
+    "max_length": 128,
+    "separator": " | "
+  },
+  "model": {
+    "hidden_sizes_embedding_pipeline": [
+      1024,
+      2048,
+      4096
+    ],
+    "hidden_sizes_metadata_pipeline": [
+      512,
+      1024
+    ],
+    "hidden_sizes_merged_pipeline": [
+      2048,
+      1024,
+      512,
+      256
+    ],
+    "output_size": 3,
+    "dropout_rate": 0.2
+  },
+  "optim": {
+    "batch_size": 128,
+    "num_epochs": 100,
+    "learning_rate": 1e-05,
+    "scaler_batch_size": 512,
+    "scheduler_mode": "min",
+    "scheduler_patience": 400,
+    "scheduler_factor": 0.1
+  },
+  "split": {
+    "test_size": 0.3,
+    "val_fraction_of_holdout": 0.5
+  },
+  "baselines": {
+    "enabled": true,
+    "feature_column": "metadata_tensor",
+    "train_on_train_and_val": false,
+    "models": {
+      "XGBoost": {
+        "objective": "multi:softmax",
+        "eval_metric": "mlogloss"
+      },
+      "RandomForest": {
+        "n_estimators": 100
+      },
+      "CatBoost": {
+        "iterations": 100,
+        "learning_rate": 0.1,
+        "depth": 6,
+        "verbose": 0
+      },
+      "LightGBM": {},
+      "KNN": {
+        "n_neighbors": 5
+      },
+      "NaiveBayes": {},
+      "LogisticRegression": {
+        "max_iter": 1000
+      },
+      "AdaBoost": {
+        "n_estimators": 100
+      },
+      "SVM": {
+        "probability": true,
+        "kernel": "linear"
+      }
+    }
+  },
+  "outputs": {
+    "model_path": "models/CB_pooler_embeddings_content_before_concat_patch_before_1pipeline_noleak_metadata_only_apache_balanced_45993.pth",
+    "scaler_path": "scalers/scaler_metadata_45993.pkl",
+    "dnn_confusion_png": "outputs/figures/DNN_confusion_matrix_1pipeline_noleak_metadata.png",
+    "ml_metrics_csv": "outputs/metrics/model_metrics_1pipeline_noleak_metadata.csv",
+    "ml_confusion_png": "outputs/figures/all_confusion_matrices_1pipeline_noleak_metadata.png"
+  }
+}

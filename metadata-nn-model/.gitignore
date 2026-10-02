@@ -1,0 +1,15 @@
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Generated artifacts (the folders themselves are kept via .gitkeep)
+data/raw/*
+data/processed/*
+embeddings/*
+models/*
+scalers/*
+outputs/metrics/*
+outputs/figures/*
+!**/.gitkeep
+catboost_info/

@@ -1,0 +1,12 @@
+{
+  "_comment": "Step 2, run 1 of 2. pooling is 'pooler' (default for codebert) or 'cls' (last-layer [CLS], for models without a pooler).",
+  "input_csv": "data/processed/merged_2label_no_license_no_imports_balanced_14768.csv",
+  "model_name": "microsoft/codebert-base",
+  "pooling": "pooler",
+  "device": "auto",
+  "batch_size": 32,
+  "max_seq_length": 512,
+  "index_column": "index",
+  "column": "content_before",
+  "embedding_dir": "embeddings/CB_pooler_embeddings_content_before_2label_no_license_no_imports_balanced_14768"
+}

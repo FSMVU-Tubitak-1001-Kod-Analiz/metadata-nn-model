@@ -1,0 +1,63 @@
+{
+  "_comment": "Step 1. Paths are relative to the project root. labels.keep order is preserved from the original scripts (it fixes row order, and therefore fold assignment).",
+  "raw_csv": "data/raw/merged.csv",
+  "output_dir": "data/processed",
+  "output_csv_name": "merged_2label_no_license_no_imports_balanced_14768.csv",
+  "rows_per_repo": 440,
+  "columns_to_keep": [
+    "pr_title",
+    "commit_message",
+    "file_path",
+    "content_after",
+    "content_before",
+    "patch_before",
+    "patch_after",
+    "additions",
+    "deletions"
+  ],
+  "columns_to_drop": [
+    "pr_title",
+    "class_names",
+    "commit_sha",
+    "file_path",
+    "additions",
+    "deletions",
+    "file_name",
+    "content_before",
+    "content_after",
+    "created_at",
+    "closed_at",
+    "status"
+  ],
+  "labels": {
+    "all": [
+      "bug",
+      "enhancement",
+      "performance",
+      "refactor",
+      "clean"
+    ],
+    "keep": [
+      "enhancement",
+      "bug"
+    ]
+  },
+  "balance_labels_early": false,
+  "balance_seed": 1,
+  "repo_column": "full_repo_name",
+  "label_column": "labels",
+  "analysis_target_label": "clean",
+  "merge": {
+    "enabled": false,
+    "input_dir": "data/raw/inputs",
+    "output_csv": "data/raw/merged.csv"
+  },
+  "folds": {
+    "n_splits": 5,
+    "random_state": 42,
+    "holdout_fraction": 0.3,
+    "test_fraction_of_holdout": 0.5,
+    "kfold_subdir": "folds",
+    "split_subdir": "folds_70_15_15"
+  }
+}

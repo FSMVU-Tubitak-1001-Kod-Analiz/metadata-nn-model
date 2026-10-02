@@ -1,0 +1,101 @@
+{
+  "_comment": "Step 4. Output paths contain {fold}. metadata.columns includes commit_message (as the original run did); remove it for a leak-safe run like 3b. Baselines train on metadata_tensor only and on train+val, as in the original notebook.",
+  "seed": 42,
+  "device": "auto",
+  "folds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "folds_dir": "data/processed/folds_70_15_15",
+  "label_column": "labels",
+  "embeddings": {
+    "content_before_dir": "embeddings/CB_pooler_embeddings_content_before_2label_no_license_no_imports_balanced_14768",
+    "patch_before_dir": "embeddings/CB_pooler_embeddings_patch_before_2label_no_license_no_imports_balanced_14768"
+  },
+  "metadata": {
+    "model_name": "bert-base-uncased",
+    "columns": [
+      "commit_message",
+      "file_path",
+      "additions",
+      "deletions"
+    ],
+    "max_length": 128,
+    "separator": " | "
+  },
+  "model": {
+    "hidden_sizes_embedding_pipeline": [
+      1024,
+      2048,
+      4096
+    ],
+    "hidden_sizes_metadata_pipeline": [
+      1024,
+      2048
+    ],
+    "hidden_sizes_merged_pipeline": [
+      4096,
+      2048,
+      1024,
+      512
+    ],
+    "output_size": 2,
+    "dropout_rate": 0.2,
+    "modality_dropout_p": 0.1,
+    "fusion_dim": null
+  },
+  "optim": {
+    "batch_size": 128,
+    "num_epochs": 100,
+    "learning_rate": 1e-05,
+    "scaler_batch_size": 512,
+    "scheduler_mode": "min",
+    "scheduler_patience": 400,
+    "scheduler_factor": 0.1
+  },
+  "baselines": {
+    "enabled": true,
+    "feature_column": "metadata_tensor",
+    "train_on_train_and_val": true,
+    "models": {
+      "XGBoost": {
+        "objective": "multi:softmax",
+        "eval_metric": "mlogloss"
+      },
+      "RandomForest": {
+        "n_estimators": 100
+      },
+      "CatBoost": {
+        "iterations": 100,
+        "learning_rate": 0.1,
+        "depth": 6,
+        "verbose": 0
+      },
+      "LightGBM": {},
+      "KNN": {
+        "n_neighbors": 5
+      },
+      "NaiveBayes": {},
+      "LogisticRegression": {
+        "max_iter": 1000
+      },
+      "AdaBoost": {
+        "n_estimators": 100
+      },
+      "SVM": {
+        "probability": true,
+        "kernel": "linear"
+      }
+    }
+  },
+  "outputs": {
+    "model_path": "models/CB_pooler_embeddings_content_before_concat_patch_before_exp_architecture_gatedfusion_14768_Adam_BN_w_commsg_fold{fold}.pth",
+    "scaler_path": "scalers/scaler_cb_pooler_14768_fold{fold}.pkl",
+    "dnn_confusion_png": "outputs/figures/DNN_confusion_matrix_adam_bn_w_commsg_fold{fold}.png",
+    "ml_metrics_csv": "outputs/metrics/model_metrics_adam_bn_w_commsg_fold{fold}.csv",
+    "ml_confusion_png": "outputs/figures/all_confusion_matrices_adam_bn_w_commsg_fold{fold}.png"
+  }
+}

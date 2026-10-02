@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "difflabel"
+version = "0.1.0"
+description = "Classify code-change records from CodeBERT code embeddings and BERT metadata embeddings (gated fusion)."
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "torch",
+    "transformers",
+    "joblib",
+    "tqdm",
+    "matplotlib",
+    "seaborn",
+    "xgboost",
+    "lightgbm",
+    "catboost",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
