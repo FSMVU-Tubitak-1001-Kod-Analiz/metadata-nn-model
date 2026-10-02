@@ -1,0 +1,20 @@
+pandas
+numpy
+torch
+transformers
+scikit-learn
+xgboost
+catboost
+lightgbm
+joblib
+tqdm
+matplotlib
+seaborn
+
+# Required by utils.py's SepAdderFileReader import (addSepToDf_multiprocess,
+# add_sep_to_subset). Not on PyPI -- install/vendor this from wherever your
+# team keeps it. If you don't use those specific utils.py functions, this
+# import will still need to resolve for `import utils` to succeed; stub out
+# a `sep/sep_adder_file_reader.py` with a no-op SepAdderFileReader class if
+# you don't have the real package and don't need that functionality.
+# sep

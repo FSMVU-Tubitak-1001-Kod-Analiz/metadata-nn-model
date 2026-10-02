@@ -1,0 +1,2 @@
+{"code": "public int add(int x, int y) {\n    return x + y;\n}", "language": "java"}
+{"code": "public int multiply(int x, int y) {\n    return x * y;\n}", "language": "java"}
