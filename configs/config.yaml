@@ -1,0 +1,74 @@
+# Relative paths are relative to the project root; absolute paths are used as-is.
+seed: 42
+
+data:
+  # Output of repo-data-collector/collector_v2 (`python run.py build`).
+  # source: the file with code (streamed by `embed`); meta: the same rows without code
+  # (read by `prepare`; much faster, and it holds the corrected n_pr_commits).
+  # For the balanced subset: source = dataset_balanced.csv and restrict_to_source: true
+  # (prepare then reads the source's keys once and keeps only those rows).
+  source: C:/Users/eislamoglu/PycharmProjects/repo-data-collector/collector_v2/data/final/dataset.csv
+  meta: C:/Users/eislamoglu/PycharmProjects/repo-data-collector/collector_v2/data/final/dataset_meta.csv
+  restrict_to_source: false
+  processed_dir: data/processed           # rows.csv, units.csv, splits/<scheme>.csv
+  chunksize: 2000                         # rows read from the source CSV at a time
+
+labels: [bug, enhancement, clean]         # order defines class ids
+
+splits:
+  # repo / org: whole repositories / organisations held out; random: changes shuffled;
+  # time: newest changes are test (1 fold). All files of a change stay in one part.
+  schemes: [repo, org, random]
+  n_folds: 5
+  val_size: 0.15
+  test_size: 0.15
+
+embeddings:
+  dir: artifacts/embeddings
+  batch_size: 32
+  fp16: true                              # half precision on GPU: ~2x faster, same results for our purpose
+  clean_code: true                        # strip license header / imports / package line (not on `patch`)
+  save_every: 20                          # chunks between progress saves (embedding resumes from there)
+  models:
+    codebert: {name: microsoft/codebert-base, max_length: 512}
+    bert: {name: bert-base-uncased, max_length: 128}
+  # Every input is stored per file row as two poolings: <input>.cls.npy and <input>.mean.npy.
+  # "pooler" (what the paper used) is recomputed from cls when loading.
+  inputs:
+    content_before: {model: codebert, columns: [content_before]}
+    patch: {model: codebert, columns: [patch]}                    # full diff, - and + lines
+    patch_before: {model: codebert, columns: [patch_before]}      # context + removed lines
+    patch_after: {model: codebert, columns: [patch_after]}        # context + added lines
+    message: {model: bert, columns: [pr_title, commit_message], separator: " | "}   # LEAKS THE LABEL
+
+# Default experiment. Every field can be overridden per run (command line or configs/grid.yaml).
+experiment:
+  model: attention                        # code | metadata | concat | gated | attention
+  split: repo                             # one of splits.schemes
+  subset: null                            # null | single_commit
+  code: [content_before, patch]           # embedding inputs per file
+  embed_pool: mean                        # mean | cls | pooler (token pooling inside CodeBERT)
+  file_pool: attention                    # mean | max | attention (files -> change)
+  metadata: [change]                      # change | repo | message (change-level)
+  # Per-file facts (status, churn, test file, path flags) are added to every file's
+  # vector whenever the model uses metadata, so attention over files can use them.
+
+train:
+  epochs: 100                             # upper bound; early stopping usually ends sooner
+  patience: 10                            # epochs without val macro-F1 improvement
+  batch_size: 128                         # changes per batch
+  lr: 1.0e-4
+  weight_decay: 0.0
+  dropout: 0.2
+  class_weights: true                     # loss weighted by inverse class frequency (train part)
+  file_hidden: [1024, 512]                # per-file encoder
+  metadata_hidden: [128, 256]             # change-level metadata tower
+  fusion_dim: 512
+  head_hidden: [512, 256]
+  device: cuda                            # falls back to cpu if unavailable
+  out_dir: artifacts/runs
+
+baselines:
+  features: both                          # code | metadata | both
+  knn_max_train: 30000                    # KNN is fit on a random subsample of this size
+  out_dir: artifacts/baselines

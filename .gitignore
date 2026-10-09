@@ -1,8 +1,23 @@
+# Python
 __pycache__/
-*.csv
-inputs/
-embeddings/
-models/
-embeddings_for_inputs_with_code.tar.gz
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
 .ipynb_checkpoints/
 
+# Data and generated files (large, reproducible from the pipeline)
+data/*
+!data/README.md
+artifacts/
+catboost_info/
+*.csv
+*.zip
+*.pt
+*.pth
+*.pkl
+inputs/

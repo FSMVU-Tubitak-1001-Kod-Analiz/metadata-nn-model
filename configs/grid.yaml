@@ -1,0 +1,67 @@
+# Experiment grid, run with:  python -m commitclf grid  [--blocks main pooling ...] [--dry-run]
+#
+# Each entry is expanded into runs: a field given as a list means "one run per value".
+# For `code` and `metadata` (which are lists themselves) give a list of lists for several
+# settings. Fields not given come from `experiment` in config.yaml.
+# `model: best_fusion` = the fusion model (concat / gated / attention) with the highest mean
+# macro-F1 on the repo split in block `main`, so `main` must run first.
+# Finished runs (summary.csv with all folds) are skipped; use --force to redo them.
+
+folds: all
+
+runs:
+  - block: main                       # 5 models x 2 splits = 10
+    model: [code, metadata, concat, gated, attention]
+    split: [repo, org]
+
+  - block: file_pool                  # attention pooling is in `main`; +2
+    model: best_fusion
+    file_pool: [mean, max]
+
+  - block: code_input                 # default [content_before, patch] is in `main`; 3 x 2 = 6
+    model: [code, best_fusion]
+    code:
+      - [content_before, patch_before]                 # the paper's inputs
+      - [patch]                                        # the change only (Reviewer 3)
+      - [content_before, patch_before, patch_after]    # before and after sides separately
+
+  - block: embed_pool                 # mean is in `main`; +2
+    model: code
+    embed_pool: [cls, pooler]
+
+  - block: leakage                    # commit message + PR title as input; +2
+    model: [metadata, best_fusion]
+    metadata: [[change, message]]
+
+  - block: robustness                 # single-commit changes only; +2
+    model: best_fusion
+    subset: single_commit
+    split: [repo, org]
+
+  - block: shortcut                   # random split: repo-name shortcut + paper-style setting; +3
+    name: paper_with_repo
+    model: concat
+    split: random
+    code: [[content_before, patch_before]]
+    embed_pool: pooler
+    file_pool: mean
+    metadata: [[change, repo]]
+  - block: shortcut
+    name: paper_without_repo
+    model: concat
+    split: random
+    code: [[content_before, patch_before]]
+    embed_pool: pooler
+    file_pool: mean
+    metadata: [[change]]
+  - block: shortcut
+    model: best_fusion
+    split: random
+
+baselines:                            # 3 feature sets x 2 splits (+ random for the RepoMajority row)
+  - block: baselines
+    features: [code, metadata, both]
+    split: [repo, org]
+  - block: baselines
+    features: metadata
+    split: random

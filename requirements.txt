@@ -1,0 +1,14 @@
+# Install torch first with the CUDA build that matches your GPU, e.g.
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# then:  pip install -e .
+numpy
+pandas
+pyyaml
+tqdm
+matplotlib
+scikit-learn
+torch
+transformers
+xgboost
+lightgbm
+catboost
