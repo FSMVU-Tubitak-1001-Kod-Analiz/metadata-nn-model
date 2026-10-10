@@ -57,8 +57,10 @@ train:
   epochs: 100                             # upper bound; early stopping usually ends sooner
   patience: 10                            # epochs without val macro-F1 improvement
   batch_size: 128                         # changes per batch
-  lr: 1.0e-4
-  weight_decay: 0.0
+  lr: 3.0e-5
+  weight_decay: 1.0e-4
+  lr_patience: 3                          # halve the lr after this many epochs without val macro-F1 improvement
+  lr_factor: 0.5
   dropout: 0.2
   class_weights: true                     # loss weighted by inverse class frequency (train part)
   file_hidden: [1024, 512]                # per-file encoder

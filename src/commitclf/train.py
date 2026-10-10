@@ -105,6 +105,8 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, run_dir: Path
     criterion = nn.CrossEntropyLoss(weight=weight)
     plain = nn.CrossEntropyLoss()   # unweighted loss for reporting
     optimizer = torch.optim.Adam(model.parameters(), lr=t["lr"], weight_decay=t.get("weight_decay", 0.0))
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="max", factor=t.get("lr_factor", 0.5), patience=t.get("lr_patience", 3))
     generator = torch.Generator().manual_seed(cfg["seed"] + fold)
 
     fold_dir = run_dir / f"fold{fold}"
@@ -117,11 +119,13 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, run_dir: Path
     for epoch in bar:
         tr = train_epoch(model, table, sets["train"], criterion, optimizer, device, bs, generator)
         val, *_ = evaluate(model, table, sets["val"], plain, device, bs, labels)
-        history.append({"epoch": epoch, **{f"train_{k}": v for k, v in tr.items()},
+        lr = optimizer.param_groups[0]["lr"]
+        scheduler.step(val["f1"])
+        history.append({"epoch": epoch, "lr": lr, **{f"train_{k}": v for k, v in tr.items()},
                         **{f"val_{k}": v for k, v in val.items()}})
         w = f" code_w={tr['code_weight']:.2f}" if "code_weight" in tr else ""
         tqdm.write(f"[{epoch:3d}] train loss={tr['loss']:.4f} acc={tr['accuracy']:.4f} | "
-                   f"val loss={val['loss']:.4f} acc={val['accuracy']:.4f} f1={val['f1']:.4f}{w}")
+                   f"val loss={val['loss']:.4f} acc={val['accuracy']:.4f} f1={val['f1']:.4f}{w} lr={lr:.1e}")
         if val["f1"] > best_f1:
             best_f1, best_epoch = val["f1"], epoch
             torch.save({"state_dict": model.state_dict(), "spec": spec, "epoch": epoch, "file_dim": table.dim,

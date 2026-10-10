@@ -74,7 +74,7 @@ fusion (concat | gated | attention) -> MLP head -> bug / enhancement / clean
 **Token pooling inside CodeBERT** (`--embed-pool`): `mean` (default), `cls`, or `pooler`, which
 is tanh(W·cls+b) and what the paper used.
 
-**Training:** Adam, lr 1e-4, class-weighted cross-entropy, batch of 128 changes. Early stopping
+**Training:** Adam (lr 3e-5, weight decay 1e-4, lr halved after 3 epochs without val macro-F1 improvement), class-weighted cross-entropy, batch of 128 changes. Early stopping
 on validation macro-F1 (patience 10, at most 100 epochs). The best checkpoint is evaluated on test.
 
 ## Splits
