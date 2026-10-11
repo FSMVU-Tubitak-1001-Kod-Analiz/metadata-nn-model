@@ -1,6 +1,7 @@
 # Install torch first with the CUDA build that matches your GPU, e.g.
 #   pip install torch --index-url https://download.pytorch.org/whl/cu124
 # then:  pip install -e .
+# Pin-sensitive env? Check first with: pip install --dry-run -e .
 numpy
 pandas
 pyyaml
@@ -12,4 +13,3 @@ transformers
 xgboost
 lightgbm
 catboost
-shap

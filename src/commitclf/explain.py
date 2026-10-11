@@ -129,11 +129,45 @@ def macro_f1(y, proba) -> float:
 
 # ---------------------------------------------------------------------------- shap
 
+def tree_shap(model, X: np.ndarray, n_classes: int) -> np.ndarray:
+    """Exact TreeSHAP values from XGBoost itself (no `shap` package): [n, features, classes]."""
+    import xgboost as xgb
+    contrib = model.get_booster().predict(xgb.DMatrix(X), pred_contribs=True)
+    contrib = np.asarray(contrib)
+    if contrib.ndim == 2:                     # binary: [n, features + 1]
+        contrib = contrib[:, None, :]
+    return contrib[:, :, :-1].transpose(0, 2, 1)   # drop the bias column -> [n, features, classes]
+
+
+def beeswarm(plt, sv: np.ndarray, X: np.ndarray, names: list[str], title: str, path: Path,
+             top: int = 15, max_points: int = 3000, seed: int = 0) -> None:
+    """SHAP summary plot: one row per feature, dots = changes, colour = feature value (low blue, high red)."""
+    order = np.argsort(np.abs(sv).mean(0))[::-1][:top][::-1]
+    rng = np.random.default_rng(seed)
+    pick = rng.choice(len(sv), min(max_points, len(sv)), replace=False)
+    fig, ax = plt.subplots(figsize=(8, 0.42 * len(order) + 1.5))
+    for row, j in enumerate(order):
+        x, v = sv[pick, j], X[pick, j]
+        rank = pd.Series(v).rank(pct=True).to_numpy() if np.ptp(v) > 0 else np.full(len(v), 0.5)
+        ax.scatter(x, row + rng.uniform(-0.3, 0.3, len(x)), c=rank, cmap="coolwarm", s=6, alpha=0.6,
+                   vmin=0, vmax=1, linewidths=0)
+    ax.axvline(0, color="grey", lw=0.8)
+    ax.set_yticks(range(len(order)), [names[j] for j in order])
+    ax.set_xlabel("SHAP value (impact on the class log-odds)")
+    ax.set_title(title)
+    sm = plt.cm.ScalarMappable(cmap="coolwarm")
+    cb = fig.colorbar(sm, ax=ax, ticks=[0, 1], pad=0.01)
+    cb.ax.set_yticklabels(["low", "high"])
+    cb.set_label("feature value")
+    fig.tight_layout()
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+
+
 def run_shap(cfg: dict, split: str, folds: list[int], subset=None) -> pd.DataFrame:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import shap
     from xgboost import XGBClassifier
 
     from commitclf.baselines import balanced_weights
@@ -152,8 +186,7 @@ def run_shap(cfg: dict, split: str, folds: list[int], subset=None) -> pd.DataFra
         X_test = test[cols].to_numpy(np.float32)
         y_test = encode_labels(test["label"], labels).numpy()
         f1 = macro_f1(y_test, model.predict_proba(X_test))
-        sv = shap.TreeExplainer(model).shap_values(X_test)
-        sv = np.stack(sv, axis=-1) if isinstance(sv, list) else np.asarray(sv)   # -> [n, features, classes]
+        sv = tree_shap(model, X_test, len(labels))   # [n, features, classes]
         print(f"Fold {fold}: XGBoost macro-F1 {f1:.4f}, SHAP on {len(X_test)} test changes")
 
         for k, cls in enumerate(labels):
@@ -164,13 +197,9 @@ def run_shap(cfg: dict, split: str, folds: list[int], subset=None) -> pd.DataFra
                              "mean_abs_shap": float(np.abs(v).mean()), "direction": float(corr)})
         if fold == folds[0]:
             for k, cls in enumerate(labels):
-                plt.figure()
-                shap.summary_plot(sv[:, :, k], X_test, feature_names=[NAMES.get(c, c) for c in cols],
-                                  show=False, max_display=15)
-                plt.title(f"SHAP for class '{cls}' (fold {fold}, {split} split)")
-                plt.tight_layout()
-                plt.savefig(d / f"beeswarm_{cls}.png", dpi=200)
-                plt.close()
+                beeswarm(plt, sv[:, :, k], X_test, [NAMES.get(c, c) for c in cols],
+                         f"SHAP for class '{cls}' (fold {fold}, {split} split)", d / f"beeswarm_{cls}.png",
+                         seed=cfg["seed"])
 
     df = pd.DataFrame(rows)
     df.to_csv(d / "shap_per_fold.csv", index=False)

@@ -19,8 +19,7 @@ dependencies = [
     "xgboost",
     "lightgbm",
     "catboost",
-    "shap",
-]
+]   # no shap: SHAP values come from XGBoost itself (pred_contribs)
 
 [project.scripts]
 commitclf = "commitclf.cli:main"

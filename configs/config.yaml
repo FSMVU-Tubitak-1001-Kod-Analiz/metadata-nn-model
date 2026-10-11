@@ -7,8 +7,8 @@ data:
   # (read by `prepare`; much faster, and it holds the corrected n_pr_commits).
   # For the balanced subset: source = dataset_balanced.csv and restrict_to_source: true
   # (prepare then reads the source's keys once and keeps only those rows).
-  source: C:/Users/eislamoglu/PycharmProjects/repo-data-collector/collector_v2/data/final/dataset.csv
-  meta: C:/Users/eislamoglu/PycharmProjects/repo-data-collector/collector_v2/data/final/dataset_meta.csv
+  source: /home/eislamoglu/PycharmProjects/repo-data-collector/collector_v2/data/final/dataset.csv
+  meta: /home/eislamoglu/PycharmProjects/repo-data-collector/collector_v2/data/final/dataset_meta.csv
   restrict_to_source: false
   processed_dir: data/processed           # rows.csv, units.csv, splits/<scheme>.csv
   chunksize: 2000                         # rows read from the source CSV at a time
