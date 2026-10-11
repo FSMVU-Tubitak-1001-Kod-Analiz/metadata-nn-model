@@ -350,7 +350,7 @@ def line_types(text: str) -> tuple[np.ndarray, list[str]]:
 
 
 def run_tokens(cfg: dict, run: str, fold: int, n: int = 300, steps: int = 32, max_files: int = 5,
-               target: str = "pred", examples: int = 4):
+               target: str = "pred", examples: int = 4, ig_batch: int = 32):
     from transformers import AutoModel, AutoTokenizer
 
     device = get_device(cfg["train"].get("device", "cuda"))
@@ -427,7 +427,7 @@ def run_tokens(cfg: dict, run: str, fold: int, n: int = 300, steps: int = 32, ma
             base = word_emb(base_ids)
             grads = torch.zeros_like(x)
             alphas = (torch.arange(steps, device=device) + 0.5) / steps
-            for a in alphas.split(8):
+            for a in alphas.split(ig_batch):   # interpolation steps per GPU batch
                 emb = (base + a.view(-1, 1, 1) * (x - base)).requires_grad_(True)
                 v = embed_from(emb, mask.expand(len(a), -1))
                 f = files.expand(len(a), -1, -1).clone()

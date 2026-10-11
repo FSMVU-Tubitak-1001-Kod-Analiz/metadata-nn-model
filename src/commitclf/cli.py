@@ -79,6 +79,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--steps", type=int, default=32, help="tokens: Integrated Gradients steps")
     p.add_argument("--max-files", type=int, default=5, help="tokens: skip changes with more files")
     p.add_argument("--target", choices=["pred", "true"], default="pred", help="tokens: class to explain")
+    p.add_argument("--ig-batch", type=int, default=32,
+                   help="tokens: interpolation steps per GPU batch (32 x 512 tokens needs ~15 GB; lower if out of memory)")
 
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
@@ -105,7 +107,7 @@ def main(argv: list[str] | None = None) -> None:
             explain.run_weights(cfg, args.run, folds)
         else:
             explain.run_tokens(cfg, args.run, fold=(folds or [1])[0], n=args.n, steps=args.steps,
-                               max_files=args.max_files, target=args.target)
+                               max_files=args.max_files, target=args.target, ig_batch=args.ig_batch)
     elif args.command == "grid":
         from commitclf import grid
         grid.run(cfg, args.grid, blocks=args.blocks, dry_run=args.dry_run, force=args.force,
