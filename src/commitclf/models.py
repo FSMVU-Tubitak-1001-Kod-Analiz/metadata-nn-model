@@ -77,10 +77,12 @@ class GatedFusion(nn.Module):
         self.pa, self.pb = nn.Linear(a_dim, dim), nn.Linear(b_dim, dim)
         self.gate = nn.Linear(a_dim + b_dim, dim)
         self.last_weight: float | None = None   # mean code weight of the last batch
+        self.last_code_weights: torch.Tensor | None = None   # [B] per-change mean gate
 
     def forward(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         g = torch.sigmoid(self.gate(torch.cat((a, b), dim=1)))
-        self.last_weight = g.mean().item()
+        self.last_code_weights = g.mean(1).detach()
+        self.last_weight = self.last_code_weights.mean().item()
         return g * torch.tanh(self.pa(a)) + (1 - g) * torch.tanh(self.pb(b))
 
 
@@ -98,7 +100,8 @@ class AttentionFusion(nn.Module):
         tokens = torch.stack((torch.tanh(self.pa(a)), torch.tanh(self.pb(b))), dim=1)   # [B, 2, dim]
         weights = torch.softmax(self.score(tokens).squeeze(-1), dim=1)                   # [B, 2]
         self.last_weights = weights.detach()
-        self.last_weight = weights[:, 0].mean().item()
+        self.last_code_weights = self.last_weights[:, 0]
+        self.last_weight = self.last_code_weights.mean().item()
         return (weights.unsqueeze(-1) * tokens).sum(1)
 
 

@@ -136,6 +136,39 @@ python -m commitclf baselines --features metadata --split repo --models XGBoost 
 - Two reference rows: `Majority`, and `RepoMajority` (the repo's most common training class,
   meaningful on the random split).
 
+## Explaining the results (after the grid)
+
+These reuse the saved checkpoints; nothing is retrained except a fast XGBoost for SHAP.
+
+```bash
+python -m commitclf explain shap --split repo                 # metadata feature ranking + direction, per class
+python -m commitclf explain permutation --run main/metadata_repo   # macro-F1 drop when a feature group is shuffled
+python -m commitclf explain permutation --run main/<fusion>_repo
+python -m commitclf explain weights --run main/<fusion>_repo  # attention over files, code-vs-metadata weight
+python -m commitclf explain tokens --run main/<fusion>_repo --fold 1   # Integrated Gradients on the diff
+```
+
+- **shap:** XGBoost on the change-level metadata, then TreeSHAP. Outputs `shap_ranking.csv`,
+  `shap_per_class.csv` (mean |SHAP| plus the direction as a Spearman correlation of feature value
+  vs SHAP) and one beeswarm plot per class.
+- **permutation:** shuffles a feature group, or a single feature, across the test set and
+  measures the drop in macro-F1. The groups are size, status, test files, path/name, number of
+  files, commits, and each code input. Output: `permutation.csv`, mean ± std over folds.
+- **weights:** per test change, the fusion weight (code side vs change metadata) and the
+  attention weight of every file. The summary shows whether test, added or renamed files get
+  more or less than an equal share.
+- **tokens:** for about 300 test changes (5 files or fewer), Integrated Gradients is pushed
+  through CodeBERT down to the tokens of the `patch` input.
+  - `token_attribution_summary.csv` gives the share of attribution on added, removed and context
+    lines and on hunk headers, compared with their share of tokens (enrichment > 1 = the model
+    focuses there).
+  - `examples.html` shows highlighted diffs.
+  - The run prints a completeness check: attributions should sum to the change in model output.
+  - It needs the source `dataset.csv` for the patch text and takes roughly an hour on a GPU.
+
+Outputs are written to `artifacts/explain/<analysis>/<run>/`. Don't rerun `prepare` or `embed`
+on different data before explaining: the checkpoints are tied to the current rows and embeddings.
+
 ## Outputs
 
 ```

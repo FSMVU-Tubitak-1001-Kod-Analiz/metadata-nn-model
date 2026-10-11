@@ -73,4 +73,6 @@ train:
 baselines:
   features: both                          # code | metadata | both
   knn_max_train: 30000                    # KNN is fit on a random subsample of this size
+  skip: {}                                # models to leave out per feature set, e.g. {code: [AdaBoost]}
+                                          # (AdaBoost takes ~50 min per fold on the 1,536-dim code features)
   out_dir: artifacts/baselines

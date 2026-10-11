@@ -122,8 +122,9 @@ def run(cfg: dict, folds: list[int], spec: dict, features: str | None = None,
             print(f"  {ref:<20} acc={m['accuracy']:.4f} f1={m['f1']:.4f}")
 
         rng = np.random.default_rng(cfg["seed"] + fold)
+        skip = set(cfg["baselines"].get("skip", {}).get(features, []))
         for model_name, model in make_models(cfg["seed"], n_classes).items():
-            if only and model_name not in only:
+            if (only and model_name not in only) or (not only and model_name in skip):
                 continue
             Xf, yf, wf = X_train, y_train, w_train
             if model_name == "KNN" and len(X_train) > cfg["baselines"].get("knn_max_train", 30000):

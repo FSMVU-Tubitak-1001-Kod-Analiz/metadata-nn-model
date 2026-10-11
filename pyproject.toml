@@ -19,6 +19,7 @@ dependencies = [
     "xgboost",
     "lightgbm",
     "catboost",
+    "shap",
 ]
 
 [project.scripts]

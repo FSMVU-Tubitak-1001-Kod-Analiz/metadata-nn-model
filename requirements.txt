@@ -12,3 +12,4 @@ transformers
 xgboost
 lightgbm
 catboost
+shap

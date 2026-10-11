@@ -6,6 +6,7 @@
     train       train/evaluate the change classifier
     baselines   train/evaluate the classic ML models
     grid        run the experiment grid in configs/grid.yaml
+    explain     shap | permutation | weights | tokens on finished runs (see explain.py)
 
 Experiment options (train, baselines) override `experiment` in the config:
     --model code|metadata|concat|gated|attention   --split repo|org|random|time
@@ -67,6 +68,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--dry-run", action="store_true", help="list the runs without training")
     p.add_argument("--force", action="store_true", help="redo finished runs")
 
+    p = sub.add_parser("explain", help="explain finished runs")
+    p.add_argument("analysis", choices=["shap", "permutation", "weights", "tokens"])
+    p.add_argument("--run", help="finished run, e.g. main/attention_repo (permutation, weights, tokens)")
+    p.add_argument("--split", default="repo", choices=SCHEMES, help="split for shap (default: repo)")
+    p.add_argument("--subset", choices=["single_commit"], help="subset for shap")
+    p.add_argument("--folds", nargs="+", default=["all"], help="fold numbers or 'all' (default: all)")
+    p.add_argument("--repeats", type=int, default=3, help="permutation: shuffles per feature")
+    p.add_argument("--n", type=int, default=300, help="tokens: number of test changes")
+    p.add_argument("--steps", type=int, default=32, help="tokens: Integrated Gradients steps")
+    p.add_argument("--max-files", type=int, default=5, help="tokens: skip changes with more files")
+    p.add_argument("--target", choices=["pred", "true"], default="pred", help="tokens: class to explain")
+
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
 
@@ -79,6 +92,20 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "embed":
         from commitclf import embeddings
         embeddings.run(cfg, only=args.only, overwrite=args.overwrite)
+    elif args.command == "explain":
+        from commitclf import explain
+        if args.analysis != "shap" and not args.run:
+            parser.error(f"explain {args.analysis} needs --run (e.g. main/attention_repo)")
+        folds = None if args.folds == ["all"] else [int(f) for f in args.folds]
+        if args.analysis == "shap":
+            explain.run_shap(cfg, args.split, folds or parse_folds(["all"], cfg, args.split), args.subset)
+        elif args.analysis == "permutation":
+            explain.run_permutation(cfg, args.run, folds, repeats=args.repeats)
+        elif args.analysis == "weights":
+            explain.run_weights(cfg, args.run, folds)
+        else:
+            explain.run_tokens(cfg, args.run, fold=(folds or [1])[0], n=args.n, steps=args.steps,
+                               max_files=args.max_files, target=args.target)
     elif args.command == "grid":
         from commitclf import grid
         grid.run(cfg, args.grid, blocks=args.blocks, dry_run=args.dry_run, force=args.force,
