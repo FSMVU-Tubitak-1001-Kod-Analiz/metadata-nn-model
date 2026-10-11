@@ -6,7 +6,7 @@
     train       train/evaluate the change classifier
     baselines   train/evaluate the classic ML models
     grid        run the experiment grid in configs/grid.yaml
-    explain     shap | permutation | weights | tokens on finished runs (see explain.py)
+    explain     shap | permutation | weights | tokens | occlusion on finished runs (see explain.py)
 
 Experiment options (train, baselines) override `experiment` in the config:
     --model code|metadata|concat|gated|attention   --split repo|org|random|time
@@ -69,15 +69,16 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--force", action="store_true", help="redo finished runs")
 
     p = sub.add_parser("explain", help="explain finished runs")
-    p.add_argument("analysis", choices=["shap", "permutation", "weights", "tokens"])
-    p.add_argument("--run", help="finished run, e.g. main/attention_repo (permutation, weights, tokens)")
+    p.add_argument("analysis", choices=["shap", "permutation", "weights", "tokens", "occlusion"])
+    p.add_argument("--run", help="finished run, e.g. main/attention_repo (permutation, weights, tokens, occlusion)")
     p.add_argument("--split", default="repo", choices=SCHEMES, help="split for shap (default: repo)")
     p.add_argument("--subset", choices=["single_commit"], help="subset for shap")
     p.add_argument("--folds", nargs="+", default=["all"], help="fold numbers or 'all' (default: all)")
     p.add_argument("--repeats", type=int, default=3, help="permutation: shuffles per feature")
-    p.add_argument("--n", type=int, default=300, help="tokens: number of test changes")
+    p.add_argument("--n", type=int, default=300, help="tokens / occlusion: number of test changes")
     p.add_argument("--steps", type=int, default=32, help="tokens: Integrated Gradients steps")
-    p.add_argument("--max-files", type=int, default=5, help="tokens: skip changes with more files")
+    p.add_argument("--max-files", type=int, default=5, help="tokens / occlusion: skip changes with more files")
+    p.add_argument("--batch", type=int, default=64, help="occlusion: texts per CodeBERT batch")
     p.add_argument("--target", choices=["pred", "true"], default="pred", help="tokens: class to explain")
     p.add_argument("--ig-batch", type=int, default=32,
                    help="tokens: interpolation steps per GPU batch (32 x 512 tokens needs ~15 GB; lower if out of memory)")
@@ -105,6 +106,9 @@ def main(argv: list[str] | None = None) -> None:
             explain.run_permutation(cfg, args.run, folds, repeats=args.repeats)
         elif args.analysis == "weights":
             explain.run_weights(cfg, args.run, folds)
+        elif args.analysis == "occlusion":
+            explain.run_occlusion(cfg, args.run, fold=(folds or [1])[0], n=args.n,
+                                  max_files=args.max_files, batch_size=args.batch)
         else:
             explain.run_tokens(cfg, args.run, fold=(folds or [1])[0], n=args.n, steps=args.steps,
                                max_files=args.max_files, target=args.target, ig_batch=args.ig_batch)

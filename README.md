@@ -145,7 +145,8 @@ python -m commitclf explain shap --split repo                 # metadata feature
 python -m commitclf explain permutation --run main/metadata_repo   # macro-F1 drop when a feature group is shuffled
 python -m commitclf explain permutation --run main/<fusion>_repo
 python -m commitclf explain weights --run main/<fusion>_repo  # attention over files, code-vs-metadata weight
-python -m commitclf explain tokens --run main/<fusion>_repo --fold 1   # Integrated Gradients on the diff
+python -m commitclf explain tokens --run main/<fusion>_repo --folds 1   # Integrated Gradients on the diff
+python -m commitclf explain occlusion --run main/<fusion>_repo --folds 1  # delete one line type, re-predict
 ```
 
 - **shap:** XGBoost on the change-level metadata, then TreeSHAP. Outputs `shap_ranking.csv`,
@@ -165,6 +166,14 @@ python -m commitclf explain tokens --run main/<fusion>_repo --fold 1   # Integra
   - `examples.html` shows highlighted diffs.
   - The run prints a completeness check: attributions should sum to the change in model output.
   - It needs the source `dataset.csv` for the patch text and takes roughly an hour on a GPU.
+- **occlusion:** for the same kind of sample, one line type at a time (added, removed, context,
+  hunk header) is deleted from every `patch`, the patch is re-embedded with CodeBERT and the
+  classifier is run again. As a control, the same number of random lines is deleted.
+  - `occlusion_summary.csv`: per variant, the mean drop in the probability of the original
+    prediction, how often the prediction flips, and macro-F1 after the deletion. Subsets: all,
+    patches that fit in 512 tokens, and each true label.
+  - `occlusion_per_change.csv`: one row per change and variant.
+  - Reuses the patch texts cached by `tokens` (or reads `dataset.csv` once).
 
 Outputs are written to `artifacts/explain/<analysis>/<run>/`. Don't rerun `prepare` or `embed`
 on different data before explaining: the checkpoints are tied to the current rows and embeddings.

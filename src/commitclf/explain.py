@@ -6,6 +6,9 @@
     tokens       Integrated Gradients through CodeBERT on the `patch` input: which diff lines
                  (added / removed / context / hunk header) the prediction rests on, plus an HTML
                  page with highlighted examples
+    occlusion    remove one kind of diff line (added / removed / context / hunk header) from every
+                 file of a change, re-embed with CodeBERT and measure how much the prediction changes;
+                 compared with removing the same number of random lines
 
 Outputs go to artifacts/explain/<analysis>/<run or split>/.
 """
@@ -378,6 +381,17 @@ def line_types(text: str) -> tuple[np.ndarray, list[str]]:
     return starts, types
 
 
+def sample_changes(cs: ChangeSet, n_classes: int, n: int, max_files: int, seed: int) -> list[int]:
+    """Test changes with <= max_files files, n // n_classes per true class (same sample for tokens and occlusion)."""
+    n_files = (cs.offsets[1:] - cs.offsets[:-1]).numpy()
+    rng = np.random.default_rng(seed)
+    pick = []
+    for k in range(n_classes):
+        idx = np.where((cs.y.numpy() == k) & (n_files <= max_files))[0]
+        pick += list(rng.choice(idx, min(len(idx), n // n_classes), replace=False))
+    return sorted(int(i) for i in pick)
+
+
 def run_tokens(cfg: dict, run: str, fold: int, n: int = 300, steps: int = 32, max_files: int = 5,
                target: str = "pred", examples: int = 4, ig_batch: int = 32):
     from transformers import AutoModel, AutoTokenizer
@@ -400,14 +414,7 @@ def run_tokens(cfg: dict, run: str, fold: int, n: int = 300, steps: int = 32, ma
     cs = build_sets(cfg, spec, fold, table)["test"]
     proba = predict(clf, table, cs, device)
 
-    # sample: changes with <= max_files files, stratified by true class
-    n_files = (cs.offsets[1:] - cs.offsets[:-1]).numpy()
-    rng = np.random.default_rng(cfg["seed"])
-    pick = []
-    for k in range(len(labels)):
-        idx = np.where((cs.y.numpy() == k) & (n_files <= max_files))[0]
-        pick += list(rng.choice(idx, min(len(idx), n // len(labels)), replace=False))
-    pick = sorted(pick)
+    pick = sample_changes(cs, len(labels), n, max_files, cfg["seed"])
     keys = {rows["row_key"].iat[int(r)] for i in pick for r in cs.rows[cs.offsets[i]:cs.offsets[i + 1]]}
     texts = fetch_texts(cfg, keys, "patch", d / "patch_texts.pkl")
 
@@ -519,3 +526,128 @@ def run_tokens(cfg: dict, run: str, fold: int, n: int = 300, steps: int = 32, ma
     print(f"Integrated Gradients completeness: median relative error {err:.1%} (raise --steps if this is large)")
     print(f"{len(df)} files from {len(pick)} changes; {df['truncated'].mean():.0%} of patches were cut at "
           f"{mspec.get('max_length', 512)} tokens\n-> {d}")
+
+
+# ---------------------------------------------------------------------------- occlusion (line removal)
+
+LINE_TYPES = ("added", "removed", "context", "header")
+
+
+def drop_lines(text: str, kind: str, rng: np.random.Generator | None = None, k: int = 0) -> str:
+    """Remove all lines of one kind from a diff, or (kind='random') k random lines of any kind."""
+    lines = text.split("\n")
+    types = line_types(text)[1]
+    if kind == "random":
+        k = min(k, len(lines))
+        gone = set(rng.choice(len(lines), k, replace=False).tolist()) if k else set()
+        return "\n".join(l for i, l in enumerate(lines) if i not in gone)
+    return "\n".join(l for l, t in zip(lines, types) if t != kind)
+
+
+def run_occlusion(cfg: dict, run: str, fold: int, n: int = 300, max_files: int = 5, batch_size: int = 64):
+    from commitclf.embeddings import Encoder, emb_dir
+
+    device = get_device(cfg["train"].get("device", "cuda"))
+    rdir = run_dir(cfg, run)
+    spec = json.loads((rdir / "spec.json").read_text())
+    if "patch" not in spec["code"]:
+        raise ValueError(f"Run {run} does not use the `patch` input (code = {spec['code']})")
+    d = out_dir(cfg, "occlusion", f"{run}_fold{fold}")
+    labels = cfg["labels"]
+    e = cfg["embeddings"]
+    model_key = e["inputs"]["patch"]["model"]
+    mspec = e["models"][model_key]
+    max_len = mspec.get("max_length", 512)
+
+    table = FileTable(cfg, spec["code"], spec["embed_pool"], with_facts=spec["model"] != "code")
+    rows = load_rows(cfg)
+    clf = load_model(cfg, rdir, fold, device)
+    cs = build_sets(cfg, spec, fold, table)["test"]
+    pick = sample_changes(cs, len(labels), n, max_files, cfg["seed"])
+    keys = {rows["row_key"].iat[int(r)] for i in pick for r in cs.rows[cs.offsets[i]:cs.offsets[i + 1]]}
+    cache = out_dir(cfg, "tokens", f"{run}_fold{fold}") / "patch_texts.pkl"   # shared with `tokens`
+    texts = fetch_texts(cfg, keys, "patch", cache)
+
+    enc = Encoder(mspec["name"], max_len, batch_size, device, e.get("fp16", True))
+    pooler = torch.load(emb_dir(cfg) / f"{model_key}_pooler.pt") if spec["embed_pool"] == "pooler" else None
+    hidden = enc.hidden
+    sl = slice(spec["code"].index("patch") * hidden, (spec["code"].index("patch") + 1) * hidden)
+
+    def vectors(batch: list[str]) -> torch.Tensor:
+        cls, mean = enc(batch)
+        if spec["embed_pool"] == "mean":
+            return torch.from_numpy(mean).float()
+        x = torch.from_numpy(cls).float()
+        return torch.tanh(x @ pooler["weight"].T + pooler["bias"]) if pooler is not None else x
+
+    variants = ["full"] + [f"no_{t}" for t in LINE_TYPES] + [f"random_like_{t}" for t in ("added", "removed", "context")]
+    rng = np.random.default_rng(cfg["seed"])
+    out = []
+    for i in tqdm(pick, desc="Occlusion"):
+        s, e_ = int(cs.offsets[i]), int(cs.offsets[i + 1])
+        keys_i = [rows["row_key"].iat[int(cs.rows[s + j])] for j in range(e_ - s)]
+        originals = [texts.get(k, "") for k in keys_i]
+        counts = [{t: line_types(x)[1].count(t) for t in LINE_TYPES} for x in originals]
+        edited = []
+        for v in variants:
+            for x, c in zip(originals, counts):
+                if v == "full":
+                    edited.append(x)
+                elif v.startswith("no_"):
+                    edited.append(drop_lines(x, v[3:]))
+                else:
+                    edited.append(drop_lines(x, "random", rng, c[v.split("_like_")[1]]))
+        vec = vectors(edited).view(len(variants), e_ - s, hidden)
+
+        files = table.x[cs.rows[s:e_]].float().unsqueeze(0).repeat(len(variants), 1, 1)
+        files[:, :, sl] = vec
+        with torch.no_grad():
+            p = torch.softmax(clf(files.to(device), torch.ones(len(variants), e_ - s, dtype=torch.bool, device=device),
+                                  cs.meta[i:i + 1].expand(len(variants), -1).to(device)).float(), 1).cpu().numpy()
+        pred_full = int(p[0].argmax())
+        truncated = any(len(enc.tokenizer(x, truncation=False)["input_ids"]) > max_len for x in originals)
+        for v_i, v in enumerate(variants):
+            kind = v[3:] if v.startswith("no_") else v.split("_like_")[1] if "_like_" in v else None
+            out.append({"fold": fold, "unit_key": cs.units["unit_key"].iat[i], "label": labels[int(cs.y[i])],
+                        "variant": v, "has_lines": bool(kind is None or sum(c[kind] for c in counts) > 0),
+                        "lines_removed": 0 if kind is None else sum(c[kind] for c in counts),
+                        "truncated": truncated, "pred": labels[int(p[v_i].argmax())],
+                        "p_pred_full": float(p[v_i, pred_full]), "p_true": float(p[v_i, int(cs.y[i])])})
+
+    df = pd.DataFrame(out)
+    full = df[df["variant"] == "full"].set_index("unit_key")
+    df["drop_p_pred"] = df["unit_key"].map(full["p_pred_full"]) - df["p_pred_full"]
+    df["flipped"] = df["pred"] != df["unit_key"].map(full["pred"])
+    df.to_csv(d / "occlusion_per_change.csv", index=False)
+
+    def summarize(sub: pd.DataFrame) -> pd.DataFrame:
+        from sklearn.metrics import f1_score
+        rows_ = []
+        for v in variants:
+            x = sub[(sub["variant"] == v) & sub["has_lines"]]
+            if not len(x):
+                continue
+            rows_.append({"variant": v, "changes": len(x), "mean_lines_removed": x["lines_removed"].mean(),
+                          "drop_in_p(pred)": x["drop_p_pred"].mean(), "flip_rate": x["flipped"].mean(),
+                          "macro_f1": f1_score(x["label"], x["pred"], average="macro", labels=labels, zero_division=0)})
+        return pd.DataFrame(rows_).set_index("variant") if rows_ else pd.DataFrame()
+
+    parts = {"all": df, "not truncated": df[~df["truncated"]]}
+    parts.update({f"label = {c}": df[df["label"] == c] for c in labels})
+    tables = []
+    for name, sub in parts.items():
+        t = summarize(sub)
+        if t.empty:
+            print(f"(no changes for subset '{name}')")
+            continue
+        t.insert(0, "subset", name)
+        tables.append(t)
+    summary = pd.concat(tables)
+    summary.to_csv(d / "occlusion_summary.csv")
+    with pd.option_context("display.width", 200):
+        for name in ("all", "not truncated"):
+            if not (summary["subset"] == name).any():
+                continue
+            print(f"\n{name}:")
+            print(summary[summary["subset"] == name].drop(columns="subset").to_string(float_format=lambda v: f"{v:.3f}"))
+    print(f"\n{len(pick)} changes; per-class tables in {d / 'occlusion_summary.csv'}\n-> {d}")
