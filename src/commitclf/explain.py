@@ -69,7 +69,7 @@ CHANGE_GROUPS = {
 
 
 def out_dir(cfg: dict, analysis: str, name: str) -> Path:
-    d = resolve(cfg, "artifacts/explain") / analysis / name.replace("/", "__")
+    d = resolve(cfg, cfg.get("explain", {}).get("out_dir", "artifacts/explain")) / analysis / name.replace("/", "__")
     d.mkdir(parents=True, exist_ok=True)
     return d
 

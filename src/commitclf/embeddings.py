@@ -191,6 +191,48 @@ def run(cfg: dict, only: list[str] | None = None, overwrite: bool = False) -> No
     print(f"Done: {active} -> {emb_dir(cfg)}")
 
 
+def copy_from(cfg: dict, other_config: str, only: list[str] | None = None) -> None:
+    """Fill this config's embeddings from another config's finished ones, matched by row key.
+
+    For a subset of the data (e.g. the balanced dataset): every row of this rows.csv must exist
+    in the other config's rows.csv, whose embeddings must be complete. Much faster than re-embedding.
+    """
+    from commitclf.config import load_config
+    other = load_config(other_config)
+    if emb_dir(other).resolve() == emb_dir(cfg).resolve():
+        raise ValueError("--copy-from points at this config's own embeddings dir; give the other config")
+    rows, other_rows = load_rows(cfg), load_rows(other)
+    pos = pd.Series(np.arange(len(other_rows)), index=other_rows["row_key"])
+    src = rows["row_key"].map(pos)
+    if src.isna().any():
+        raise ValueError(f"{int(src.isna().sum())} of {len(rows)} rows are not in {other_config}'s rows.csv; "
+                         "embed them normally instead")
+    src = src.astype(int).to_numpy()
+    order = np.argsort(src)                       # read the source arrays roughly in order
+    names = only or [n for n in cfg["embeddings"]["inputs"] if read_progress(other, n).get("complete")]
+    emb_dir(cfg).mkdir(parents=True, exist_ok=True)
+    for f in emb_dir(other).glob("*_pooler.pt"):
+        (emb_dir(cfg) / f.name).write_bytes(f.read_bytes())
+    for name in names:
+        prog = read_progress(other, name)
+        if not prog.get("complete") or prog.get("n_rows", len(other_rows)) != len(other_rows):
+            print(f"{name}: not complete in {other_config}, skipped")
+            continue
+        for pool in POOLS:
+            a = np.load(array_path(other, name, pool), mmap_mode="r")
+            out = np.lib.format.open_memmap(array_path(cfg, name, pool), mode="w+", dtype=np.float16,
+                                            shape=(len(rows), a.shape[1]))
+            for s in tqdm(range(0, len(order), 50_000), desc=f"{name}.{pool}", leave=False):
+                o = order[s:s + 50_000]
+                out[o] = a[src[o]]
+            out.flush()
+            del out
+        progress_path(cfg, name).write_text(json.dumps({"source_rows": 0, "written": len(rows), "complete": True,
+                                                        "n_rows": len(rows), "copied_from": str(other_config)}))
+        print(f"{name}: copied {len(rows)} rows")
+    print(f"Done -> {emb_dir(cfg)}")
+
+
 def load_input(cfg: dict, name: str, pool: str) -> np.ndarray:
     """[n_rows, hidden] float16 array for one embedding input and pooling (cls | mean | pooler)."""
     if not read_progress(cfg, name).get("complete"):

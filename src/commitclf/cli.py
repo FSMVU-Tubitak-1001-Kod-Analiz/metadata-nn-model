@@ -53,6 +53,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("embed", help="compute embeddings")
     p.add_argument("--only", nargs="+", help="inputs from embeddings.inputs (default: all except message)")
     p.add_argument("--overwrite", action="store_true")
+    p.add_argument("--copy-from", metavar="CONFIG", help="copy finished embeddings from another config (this data must be a subset of its rows)")
 
     add_experiment_args(sub.add_parser("train", help="train the change classifier"))
 
@@ -94,7 +95,10 @@ def main(argv: list[str] | None = None) -> None:
         splits.run(cfg)
     elif args.command == "embed":
         from commitclf import embeddings
-        embeddings.run(cfg, only=args.only, overwrite=args.overwrite)
+        if args.copy_from:
+            embeddings.copy_from(cfg, args.copy_from, only=args.only)
+        else:
+            embeddings.run(cfg, only=args.only, overwrite=args.overwrite)
     elif args.command == "explain":
         from commitclf import explain
         if args.analysis != "shap" and not args.run:
