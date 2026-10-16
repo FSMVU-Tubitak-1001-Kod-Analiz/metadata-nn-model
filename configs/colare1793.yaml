@@ -75,6 +75,19 @@ train:
   device: cuda
   out_dir: artifacts/colare1793/runs
 
+# `finetune` command: the message encoder is trained with the classifier (code side stays frozen).
+#   python -m commitclf -c configs/colare1793.yaml finetune --model concat --split given --folds all
+finetune:
+  model: bert-base-uncased                # same encoder as the frozen `message` input
+  max_length: 128
+  pool: cls
+  encoder_lr: 2.0e-5
+  head_lr: 3.0e-5                         # = train.lr
+  batch_size: 32
+  epochs: 30
+  patience: 6
+  fp16: true
+
 baselines:
   features: both
   knn_max_train: 30000
