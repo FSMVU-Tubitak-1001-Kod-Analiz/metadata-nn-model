@@ -134,7 +134,10 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
     ])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=t.get("lr_factor", 0.5), patience=t.get("lr_patience", 3))
-    scaler = torch.amp.GradScaler("cuda", enabled=fp16)
+    if hasattr(torch.amp, "GradScaler"):          # torch >= 2.3
+        scaler = torch.amp.GradScaler("cuda", enabled=fp16)
+    else:
+        scaler = torch.cuda.amp.GradScaler(enabled=fp16)
     generator = torch.Generator().manual_seed(cfg["seed"] + fold)
     bs = ft["batch_size"]
 
