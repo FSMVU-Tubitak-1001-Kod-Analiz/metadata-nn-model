@@ -25,6 +25,8 @@ splits:
   #        val = 10% of all commits drawn from the other folds -> 70/10/20 (they train on 80%, no val).
   # repo / org: whole repositories / organisations (GitHub user) held out, 7 parts as in our data.
   schemes: [given, repo, org]
+  group_splitter: greedy                  # repo/org: balanced parts; StratifiedGroupKFold (scikit-learn <= 1.7)
+                                          # made a part of 8 changes from this set's 106 very unequal repos
   given_parts: data/external/colare1793/parts.csv
   given_val_size: 0.10
   n_folds: 5

@@ -13,9 +13,15 @@ Splitting happens at the change level, so all files of a change share a part.
 
 For random/repo/org the changes are cut into k = round(1 / test_size) parts;
 fold i uses part i as test, part i+1 as val and the rest as train.
+
+repo/org use StratifiedGroupKFold by default (`splits.group_splitter: sklearn`). With many tiny
+groups and a few huge ones, scikit-learn <= 1.7 can return very unequal parts (on the CoLaRe set:
+581 / 489 / 8 / 244 / 151 changes); `group_splitter: greedy` gives balanced parts that don't depend
+on the scikit-learn version.
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, train_test_split
 
@@ -30,9 +36,31 @@ def split_path(cfg: dict, scheme: str):
     return processed_path(cfg, "splits") / f"{scheme}.csv"
 
 
-def _parts(units: pd.DataFrame, scheme: str, k: int, seed: int) -> pd.Series:
+def _greedy_group_parts(units: pd.DataFrame, group_col: str, k: int, seed: int) -> pd.Series:
+    """Groups in random order, then largest first; each goes to the part whose label counts end up
+    closest (squared error) to an equal share of every label."""
+    counts = pd.crosstab(units[group_col], units["label"])
+    rng = np.random.default_rng(seed)
+    counts = counts.iloc[rng.permutation(len(counts))]
+    counts = counts.iloc[np.argsort(-counts.sum(axis=1).to_numpy(), kind="stable")]
+    target = counts.sum().to_numpy() / k
+    filled = np.zeros((k, counts.shape[1]))
+    assign = {}
+    for group, row in zip(counts.index, counts.to_numpy()):
+        cost = ((filled + row - target) ** 2).sum(axis=1) - ((filled - target) ** 2).sum(axis=1)
+        p = int(np.argmin(cost))
+        filled[p] += row
+        assign[group] = p
+    return units[group_col].map(assign)
+
+
+def _parts(units: pd.DataFrame, scheme: str, k: int, seed: int, group_splitter: str = "sklearn") -> pd.Series:
     """Assign each change to one of k parts."""
     part = pd.Series(-1, index=units.index)
+    if scheme != "random" and group_splitter == "greedy":
+        return _greedy_group_parts(units, GROUP_COL[scheme], k, seed)
+    if group_splitter not in ("sklearn", "greedy"):
+        raise ValueError(f"Unknown splits.group_splitter '{group_splitter}' (use sklearn or greedy)")
     if scheme == "random":
         splitter = StratifiedKFold(n_splits=k, shuffle=True, random_state=seed)
         folds = splitter.split(units, units["label"])
@@ -64,7 +92,11 @@ def make_scheme(cfg: dict, units: pd.DataFrame, scheme: str) -> pd.DataFrame:
     if scheme in GROUP_COL and units[GROUP_COL[scheme]].nunique() < k:
         raise ValueError(f"Only {units[GROUP_COL[scheme]].nunique()} groups for scheme '{scheme}', need {k}")
 
-    part = _parts(units, scheme, k, cfg["seed"])
+    part = _parts(units, scheme, k, cfg["seed"], s.get("group_splitter", "sklearn"))
+    sizes = part.value_counts().reindex(range(k), fill_value=0)
+    if sizes.min() < 0.5 * len(units) / k:
+        print(f"WARNING {scheme}: very unequal parts {sizes.tolist()} (expected ~{len(units) // k} each); "
+              "consider splits.group_splitter: greedy")
     for f in range(s["n_folds"]):
         col = pd.Series("train", index=units.index)
         col[part == (f + 1) % k] = "val"
