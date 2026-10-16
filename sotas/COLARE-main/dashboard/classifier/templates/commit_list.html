@@ -1,0 +1,149 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<title>Commit Classifier</title>
+    <!-- 引入Bootstrap的CSS文件 -->
+    <link rel="icon" href="{% static 'github.svg' %}" type="image/x-icon">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.4/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-KK94CHFLLe+nY2dmCWGMq91rCGa5gtU4mk92HdvYe+M/SXH301p5ILy+dN9+nJOZ" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js" integrity="sha384-ENjdO4Dr2bkBIFxQpeoTz1HIcje39Wm4jDKdf19U8gI4ddQ3GYNS7NTKfAdVQSZe" crossorigin="anonymous"></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        .footer {
+        margin-top: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- navigator -->
+    <nav class="navbar navbar-expand-lg bg-primary" data-bs-theme="dark">
+        <div class="container-fluid">
+
+            <a class="navbar-brand" href="/">
+                <img src="{% static 'git-commit.svg' %}" alt="Logo" width="30" height="24" class="d-inline-block align-text-top">
+                Commit Classifier
+              </a>
+
+              <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+              </button>
+              <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                  <li class="nav-item">
+                    <a class="nav-link " aria-current="page" href="/">Search</a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link" href="/upload">Upload</a>
+                  </li>
+                  {% if chart %}
+                  <li class="nav-item">
+                    <a class="nav-link " href="./analyse">Analyse</a>
+                  </li>
+                  {% else %}
+                  <li class="nav-item">
+                    <a class="nav-link disabled" href="./analyse">Analyse</a>
+                  </li>
+                  {% endif %}
+                </ul>
+              </div>
+
+          <span class="navbar-text">
+            Categorizing commits into corrective, perfective, and adaptive ...   
+          </span>
+        </div>
+      </nav>
+
+
+	<div class="container" style="margin: auto;">
+        <br>
+        {% if items_page %}
+
+        <ul class="list-group">
+
+            {% for commit in labeled_commits %}
+
+                <a href="{{commit.url}}" class="list-group-item list-group-item-action justify-content-between align-items-center">
+                <i class="bi bi-git"></i>  
+
+                {% if commit.label == "Corrective"%}
+                    <span class="badge rounded-pill text-bg-danger">{{commit.label}}</span>
+                {% endif %}
+                {% if commit.label == "Perfective"%}
+                    <span class="badge rounded-pill text-bg-info">{{commit.label}}</span>
+                {% endif %}
+                {% if commit.label == "Adaptive" %}
+                    <span class="badge rounded-pill text-bg-success">{{commit.label}}</span>
+                {% endif %}
+                
+                <div class="d-flex w-100 justify-content-between">
+                    <h5 class="mb-1">{{commit.commit_message_to_display}}</h5>
+                    <small>{{commit.short_sha}}</small>
+                    </div>
+                    <p class="mb-1"></p>
+                    <!-- <small>And some small print.</small> -->
+                </a>
+            {% endfor %}
+        </ul>
+
+            {% if items_page.has_other_pages %}
+            <br>
+            <div class="text-center">
+                <div class="btn-group" role="group" aria-label="Item pagination">
+                    {% if items_page.has_previous %}
+                        <a href="?page={{ items_page.previous_page_number }}" class="btn btn-outline-primary">&laquo;</a>
+                    {% endif %}
+
+                    {% if items_page.paginator.num_pages <= 9 %}
+                        {% for page_number in items_page.paginator.page_range %}
+                            {% if items_page.number == page_number %}
+                                <button class="btn btn-outline-primary active">
+                                    <span>{{ page_number }} <span class="sr-only"></span></span>
+                                </button>
+                            {% else %}
+                                <a href="?page={{ page_number }}" class="btn btn-outline-primary">
+                                    {{ page_number }}
+                                </a>
+                            {% endif %}
+                        {% endfor %}
+                    {% endif %}
+
+                    {% if items_page.paginator.num_pages > 9 %}
+
+                        {% for page_number in range_before %}
+                            <a href="?page={{ page_number }}" class="btn btn-outline-primary">
+                                {{ page_number }}
+                            </a>
+                        {% endfor %}
+                    
+                        <button class="btn btn-outline-primary active">
+                            <span>{{ items_page.number }} <span class="sr-only"></span></span>
+                        </button>
+                        
+                        {% for page_number in range_after %}
+                            <a href="?page={{ page_number }}" class="btn btn-outline-primary">
+                                {{ page_number }}
+                            </a>
+                        {% endfor %}
+
+                    {% endif %}
+
+                    {% if items_page.has_next %}
+                        <a href="?page={{ items_page.next_page_number }}" class="btn btn-outline-primary">&raquo;</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        {% endif %}
+    </div>
+    <br>
+    <br>
+    <br>
+</body>
+</html>

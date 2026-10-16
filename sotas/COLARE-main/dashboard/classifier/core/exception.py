@@ -1,0 +1,2 @@
+class IsNotGitZip(Exception):
+    pass

@@ -1,5 +1,6 @@
 """Command line entry point:  python -m commitclf <command> [options]
 
+    convert-colare  CoLaRe's 1793 commit set -> collector-format CSV + their CV folds
     prepare     collector dataset -> data/processed/{rows,units}.csv + split files
     splits      (re)build the split files from units.csv
     embed       CodeBERT / BERT vectors per file row (resumable)
@@ -47,6 +48,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("-c", "--config", default=DEFAULT_CONFIG)
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p = sub.add_parser("convert-colare", help="CoLaRe's 1793 Java commit set -> collector-format CSV")
+    p.add_argument("--src", default="sotas/COLARE-main/dataset/1793/dataset.csv")
+    p.add_argument("--out", default="data/external/colare1793")
+    p.add_argument("--files", choices=["all", "java"], default="all",
+                   help="all files with a text diff (default) or .java files only")
+
     sub.add_parser("prepare", help="build rows/units tables and splits")
     sub.add_parser("splits", help="rebuild the split files")
 
@@ -87,7 +94,11 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
 
-    if args.command == "prepare":
+    if args.command == "convert-colare":
+        from commitclf.config import resolve
+        from commitclf.data.external import convert_colare
+        convert_colare(resolve(cfg, args.src), resolve(cfg, args.out), files=args.files)
+    elif args.command == "prepare":
         from commitclf.data import prepare, splits
         splits.run(cfg, prepare.run(cfg))
     elif args.command == "splits":

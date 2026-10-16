@@ -178,6 +178,36 @@ python -m commitclf explain occlusion --run main/<fusion>_repo --folds 1  # dele
 Outputs are written to `artifacts/explain/<analysis>/<run>/`. Don't rerun `prepare` or `embed`
 on different data before explaining: the checkpoints are tied to the current rows and embeddings.
 
+## External data: CoLaRe's Java commit set
+
+`sotas/COLARE-main/dataset/1793/dataset.csv` is CoLaRe's copy (Zeng et al. 2024) of the
+Levin & Yehudai / Ghadhab commit set: 1,781 commits, Corrective / Adaptive / Perfective, mapped
+to bug / enhancement / clean. `configs/colare1793.yaml` runs our pipeline on it in separate
+folders:
+
+```bash
+python -m commitclf -c configs/colare1793.yaml convert-colare     # -> data/external/colare1793/
+python -m commitclf -c configs/colare1793.yaml prepare
+python -m commitclf -c configs/colare1793.yaml embed               # patch, patch_before, patch_after
+python -m commitclf -c configs/colare1793.yaml embed --only message
+python -m commitclf -c configs/colare1793.yaml grid --grid configs/grid_colare1793.yaml
+```
+
+- **`convert-colare`:**
+  - Splits each commit's diff into one collector-style row per file with a text diff. A quarter
+    of the files are not Java (Vala, Kotlin, XML); `--files java` keeps only `.java` files.
+  - Duplicate commits are dropped (3).
+  - Writes `parts.csv` with CoLaRe's own five test folds, reproduced from their
+    `cross_validation_launch.py`.
+- **Split `given`:**
+  - Tests on exactly those folds.
+  - Validation is 10% of the commits, taken from the other folds (70/10/20). CoLaRe trains on 80%
+    with no validation set.
+  - `repo` and `org` hold out projects / GitHub users as usual.
+- **Missing from their data:** `content_before`, PR titles and dates. Only the diff and its two
+  sides are embedded. The commit message is a normal input on this data set (the `message` block),
+  because all published results on it use the message.
+
 ## Outputs
 
 ```

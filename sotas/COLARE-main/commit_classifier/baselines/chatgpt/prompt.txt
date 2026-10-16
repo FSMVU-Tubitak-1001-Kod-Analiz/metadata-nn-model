@@ -1,0 +1,10 @@
+Please act as a commit classifier,
+categorize git commit into three categories: Adaptive, Perfective, and Corrective.
+The Adaptive category corresponds to commits that address the modifications to the project in order to adapt it to the new environment such as the feature addition.
+The Perfective category corresponds to commits that address enhancement of the project, such as enhancement of performance and refactoring of source code.
+The Corrective category corresponds to commits that address the fix of bugs and faults in the project.
+I will provide you with the commit message and code diff for a commit,
+and you need to give me the category label for this commit.
+Please avoid any explanations and only provide the category label.
+commit message: xxx.
+commit diff: xxx.

@@ -1,0 +1,83 @@
+# Our model on CoLaRe's copy of the Levin & Yehudai / Ghadhab commit set (1,781 commits,
+# Corrective / Adaptive / Perfective -> bug / enhancement / clean). Its own folders throughout
+# (data/external, data/processed_colare1793, artifacts/colare1793/...). Steps:
+#   python -m commitclf -c configs/colare1793.yaml convert-colare     # -> data/external/colare1793/
+#   python -m commitclf -c configs/colare1793.yaml prepare
+#   python -m commitclf -c configs/colare1793.yaml embed               # patch, patch_before, patch_after
+#   python -m commitclf -c configs/colare1793.yaml embed --only message
+#   python -m commitclf -c configs/colare1793.yaml grid --grid configs/grid_colare1793.yaml
+# Relative paths are relative to the project root.
+seed: 42
+
+data:
+  # Written by convert-colare (all files with a text diff; `--files java` keeps only .java files
+  # and drops the commits without one; write it to another --out and point these paths there).
+  source: data/external/colare1793/dataset.csv
+  meta: data/external/colare1793/dataset.csv
+  restrict_to_source: false
+  processed_dir: data/processed_colare1793
+  chunksize: 2000
+
+labels: [bug, enhancement, clean]         # order defines class ids
+
+splits:
+  # given: CoLaRe's own 5 stratified random folds (same test commits as their paper);
+  #        val = 10% of all commits drawn from the other folds -> 70/10/20 (they train on 80%, no val).
+  # repo / org: whole repositories / organisations (GitHub user) held out, 7 parts as in our data.
+  schemes: [given, repo, org]
+  given_parts: data/external/colare1793/parts.csv
+  given_val_size: 0.10
+  n_folds: 5
+  val_size: 0.15
+  test_size: 0.15
+
+embeddings:
+  dir: artifacts/colare1793/embeddings
+  batch_size: 32
+  fp16: true
+  clean_code: true                        # strips license header / imports on patch_before/after only
+  save_every: 20
+  models:
+    codebert: {name: microsoft/codebert-base, max_length: 512}
+    bert: {name: bert-base-uncased, max_length: 128}
+  # No content_before in their data: only the diff and its two sides.
+  inputs:
+    patch: {model: codebert, columns: [patch]}
+    patch_before: {model: codebert, columns: [patch_before]}
+    patch_after: {model: codebert, columns: [patch_after]}
+    message: {model: bert, columns: [commit_message]}   # legitimate input on this set (all prior work uses it)
+
+experiment:
+  model: concat
+  split: given
+  subset: null
+  code: [patch]                           # best code input on our balanced data
+  embed_pool: mean
+  file_pool: attention
+  metadata: [change]
+
+train:
+  epochs: 100
+  patience: 10
+  batch_size: 32                          # 128 in our runs; ~1,250 training commits -> ~40 steps per epoch
+  lr: 3.0e-5
+  weight_decay: 1.0e-4
+  lr_patience: 3
+  lr_factor: 0.5
+  dropout: 0.2
+  class_weights: true
+  file_hidden: [1024, 512]
+  metadata_hidden: [128, 256]
+  fusion_dim: 512
+  head_hidden: [512, 256]
+  device: cuda
+  out_dir: artifacts/colare1793/runs
+
+baselines:
+  features: both
+  knn_max_train: 30000
+  skip: {}
+  out_dir: artifacts/colare1793/baselines
+
+explain:
+  out_dir: artifacts/colare1793/explain

@@ -1,0 +1,22 @@
+# Grid for configs/colare1793.yaml:
+#   python -m commitclf -c configs/colare1793.yaml grid --grid configs/grid_colare1793.yaml
+folds: all
+
+runs:
+  - block: main                       # 5 models x 3 splits = 15 (given = CoLaRe's own folds)
+    model: [code, metadata, concat, gated, attention]
+    split: [given, repo, org]
+
+  - block: message                    # + commit message, as in Ghadhab / Tong / CoLaRe; 2 x 2 = 4
+    model: [metadata, concat]
+    metadata: [[change, message]]
+    split: [given, repo]
+
+  - block: code_input                 # before / after sides instead of the full diff; +1
+    model: concat
+    code: [[patch_before, patch_after]]
+
+baselines:
+  - block: baselines                  # 3 feature sets x 2 splits
+    features: [code, metadata, both]
+    split: [given, repo]

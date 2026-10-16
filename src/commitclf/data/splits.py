@@ -7,6 +7,9 @@ Splitting happens at the change level, so all files of a change share a part.
   repo   : whole repositories held out (StratifiedGroupKFold, group = repo)
   org    : whole organisations held out (group = org)
   time   : one fold; the newest test_size of changes are test, the next newest val
+  given  : test parts read from a file (`splits.given_parts`: unit_key, part), e.g. another
+           paper's cross-validation folds; val is a stratified `given_val_size` share of the
+           changes, drawn from the remaining parts
 
 For random/repo/org the changes are cut into k = round(1 / test_size) parts;
 fold i uses part i as test, part i+1 as val and the rest as train.
@@ -14,11 +17,12 @@ fold i uses part i as test, part i+1 as val and the rest as train.
 from __future__ import annotations
 
 import pandas as pd
-from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, train_test_split
 
+from commitclf.config import resolve
 from commitclf.data.prepare import load_units, processed_path
 
-SCHEMES = ("random", "repo", "org", "time")
+SCHEMES = ("random", "repo", "org", "time", "given")
 GROUP_COL = {"repo": "full_repo_name", "org": "org"}
 
 
@@ -51,6 +55,9 @@ def make_scheme(cfg: dict, units: pd.DataFrame, scheme: str) -> pd.DataFrame:
         out.loc[order > 1 - s["test_size"], "fold1"] = "test"
         return out
 
+    if scheme == "given":
+        return given_scheme(cfg, units, out)
+
     k = max(3, round(1 / s["test_size"]))
     if s["n_folds"] > k:
         raise ValueError(f"n_folds={s['n_folds']} is more than the {k} parts that test_size allows")
@@ -62,6 +69,28 @@ def make_scheme(cfg: dict, units: pd.DataFrame, scheme: str) -> pd.DataFrame:
         col = pd.Series("train", index=units.index)
         col[part == (f + 1) % k] = "val"
         col[part == f] = "test"
+        out[f"fold{f + 1}"] = col
+    return out
+
+
+def given_scheme(cfg: dict, units: pd.DataFrame, out: pd.DataFrame) -> pd.DataFrame:
+    s = cfg["splits"]
+    if not s.get("given_parts"):
+        raise ValueError("Scheme 'given' needs splits.given_parts (a CSV with unit_key, part)")
+    parts = pd.read_csv(resolve(cfg, s["given_parts"])).set_index("unit_key")["part"]
+    part = units["unit_key"].map(parts)
+    if part.isna().any():
+        raise ValueError(f"{int(part.isna().sum())} changes have no part in {s['given_parts']}")
+    ids = sorted(part.unique())
+    for f, p in enumerate(ids[:s["n_folds"]]):
+        test = (part == p).to_numpy()
+        rest = units.index[~test]
+        val_share = s.get("given_val_size", s["val_size"]) / (1 - test.mean())
+        _, val_idx = train_test_split(rest, test_size=val_share, stratify=units.loc[rest, "label"],
+                                      random_state=cfg["seed"] + f)
+        col = pd.Series("train", index=units.index)
+        col[val_idx] = "val"
+        col[test] = "test"
         out[f"fold{f + 1}"] = col
     return out
 
