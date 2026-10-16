@@ -75,18 +75,27 @@ train:
   device: cuda
   out_dir: artifacts/colare1793/runs
 
-# `finetune` command: the message encoder is trained with the classifier (code side stays frozen).
-#   python -m commitclf -c configs/colare1793.yaml finetune --model concat --split given --folds all
+# `finetune` command: encoders trained together with the classifier (see src/commitclf/finetune.py).
+#   message BERT only:          finetune --model gated --split given --folds all
+#   + CodeBERT on the diffs:    finetune --model gated --split given --folds all --code-ft
+#   CodeBERT only, no message:  finetune --model gated --split given --folds all --code-ft --no-message
 finetune:
-  model: bert-base-uncased                # same encoder as the frozen `message` input
+  model: bert-base-uncased                # message encoder, same as the frozen `message` input
   max_length: 128
   pool: cls
   encoder_lr: 2.0e-5
   head_lr: 3.0e-5                         # = train.lr
-  batch_size: 32
+  batch_size: 32                          # changes per optimizer step
   epochs: 30
   patience: 6
   fp16: true
+  # --code-ft only:
+  code_model: microsoft/codebert-base     # same model as `embed`; pooling follows --embed-pool
+  code_max_length: 512                    # as in `embed`
+  code_lr: 2.0e-5
+  max_files: 8                            # per change, the largest by churn (frozen runs see all files)
+  micro_batch: 8                          # changes per forward pass; gradients accumulate to batch_size
+  grad_checkpointing: true
 
 baselines:
   features: both

@@ -5,7 +5,7 @@
     splits      (re)build the split files from units.csv
     embed       CodeBERT / BERT vectors per file row (resumable)
     train       train/evaluate the change classifier
-    finetune    same, with the message encoder fine-tuned end to end (see finetune.py)
+    finetune    same, with the message BERT and/or CodeBERT fine-tuned end to end (see finetune.py)
     baselines   train/evaluate the classic ML models
     grid        run the experiment grid in configs/grid.yaml
     explain     shap | permutation | weights | tokens | occlusion on finished runs (see explain.py)
@@ -64,7 +64,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--copy-from", metavar="CONFIG", help="copy finished embeddings from another config (this data must be a subset of its rows)")
 
     add_experiment_args(sub.add_parser("train", help="train the change classifier"))
-    add_experiment_args(sub.add_parser("finetune", help="train with a fine-tuned message encoder"))
+    p = sub.add_parser("finetune", help="train with fine-tuned encoders (message and/or code)")
+    p.add_argument("--code-ft", action="store_true", help="also fine-tune CodeBERT on the files' code inputs")
+    p.add_argument("--no-message", action="store_true", help="don't use the message (code fine-tuning only)")
+    add_experiment_args(p)
 
     p = sub.add_parser("baselines", help="train the classic ML baselines")
     p.add_argument("--features", choices=["code", "metadata", "both"], help="overrides baselines.features")
@@ -142,7 +145,7 @@ def main(argv: list[str] | None = None) -> None:
             train.run(cfg, folds, spec, name=args.name)
         elif args.command == "finetune":
             from commitclf import finetune
-            finetune.run(cfg, folds, spec, name=args.name)
+            finetune.run(cfg, folds, spec, name=args.name, code=args.code_ft, message=not args.no_message)
         else:
             from commitclf import baselines
             baselines.run(cfg, folds, spec, features=args.features, only=args.models, name=args.name)
