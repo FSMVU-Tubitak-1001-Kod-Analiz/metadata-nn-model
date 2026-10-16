@@ -65,19 +65,22 @@ def load_messages(cfg: dict) -> pd.Series:
 class MessageModel(nn.Module):
     """ChangeClassifier whose metadata input is [change facts, encoder(message)]."""
 
-    def __init__(self, base: nn.Module, encoder: nn.Module, pool: str):
+    def __init__(self, base: nn.Module, encoder: nn.Module, pool: str, fp16: bool = False):
         super().__init__()
-        self.base, self.encoder, self.pool = base, encoder, pool
+        self.base, self.encoder, self.pool, self.fp16 = base, encoder, pool, fp16
 
     def encode(self, ids: torch.Tensor, attn: torch.Tensor) -> torch.Tensor:
-        h = self.encoder(input_ids=ids, attention_mask=attn).last_hidden_state
+        # Mixed precision only for the transformer; the classifier (BatchNorm, index_put) stays float32.
+        with torch.autocast(device_type=ids.device.type, dtype=torch.float16, enabled=self.fp16):
+            h = self.encoder(input_ids=ids, attention_mask=attn).last_hidden_state
+        h = h.float()
         if self.pool == "cls":
             return h[:, 0]
-        m = attn.unsqueeze(-1).to(h.dtype)
+        m = attn.unsqueeze(-1).float()
         return (h * m).sum(1) / m.sum(1).clamp(min=1)
 
     def forward(self, files, mask, meta, ids, attn):
-        return self.base(files, mask, torch.cat((meta, self.encode(ids, attn).float()), dim=1))
+        return self.base(files, mask, torch.cat((meta, self.encode(ids, attn)), dim=1))
 
 
 def batches(table: FileTable, cs: ChangeSet, tokens: dict, batch_size: int, shuffle: bool, generator=None):
@@ -91,13 +94,12 @@ def batches(table: FileTable, cs: ChangeSet, tokens: dict, batch_size: int, shuf
 
 
 @torch.no_grad()
-def predict(model, table, cs, tokens, device, batch_size, fp16) -> tuple[np.ndarray, np.ndarray]:
+def predict(model, table, cs, tokens, device, batch_size) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     probs, ys = [], []
     for *x, y in batches(table, cs, tokens, batch_size, shuffle=False):
         x = [t.to(device, non_blocking=True) for t in x]
-        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
-            logits = model(*x)
+        logits = model(*x)
         probs.append(torch.softmax(logits.float(), 1).cpu())
         ys.append(y)
     return torch.cat(ys).numpy(), torch.cat(probs).numpy()
@@ -122,7 +124,7 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
                               return_tensors="pt")
     encoder = AutoModel.from_pretrained(ft["model"])
     meta_dim = sets["train"].meta.shape[1] + encoder.config.hidden_size
-    model = MessageModel(make_model(cfg, spec, table.dim, meta_dim), encoder, ft["pool"]).to(device)
+    model = MessageModel(make_model(cfg, spec, table.dim, meta_dim), encoder, ft["pool"], fp16).to(device)
     print(f"Fold {fold}: " + ", ".join(f"{p}={len(s)}" for p, s in sets.items())
           + f" | file dim {table.dim}, metadata dim {meta_dim} (incl. {ft['model']} message)")
 
@@ -152,9 +154,8 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
             x = [v.to(device, non_blocking=True) for v in x]
             y = y.to(device)
             optimizer.zero_grad()
-            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=fp16):
-                logits = model(*x)
-            loss = criterion(logits.float(), y)
+            logits = model(*x)
+            loss = criterion(logits, y)
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -162,7 +163,7 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
             scaler.update()
             total += loss.item() * len(y)
             seen += len(y)
-        y_val, p_val = predict(model, table, sets["val"], tokens["val"], device, bs, fp16)
+        y_val, p_val = predict(model, table, sets["val"], tokens["val"], device, bs)
         val = classification_metrics(y_val, p_val.argmax(1), p_val, labels)
         lrs = [g["lr"] for g in optimizer.param_groups]
         scheduler.step(val["f1"])
@@ -180,7 +181,7 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
     pd.DataFrame(history).to_csv(fold_dir / "history.csv", index=False)
 
     model.load_state_dict(best_state)
-    y_true, proba = predict(model, table, sets["test"], tokens["test"], device, bs, fp16)
+    y_true, proba = predict(model, table, sets["test"], tokens["test"], device, bs)
     test = {**classification_metrics(y_true, proba.argmax(1), proba, labels), "best_epoch": best_epoch}
     print(f"Fold {fold} test: acc={test['accuracy']:.4f} f1={test['f1']:.4f} auc={test['auc']:.4f} "
           f"(best epoch {best_epoch})")
