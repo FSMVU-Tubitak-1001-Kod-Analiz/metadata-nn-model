@@ -24,3 +24,5 @@ inputs/
 
 # CoLaRe's Java commit set (input of `convert-colare`); their other datasets stay local
 !sotas/COLARE-main/dataset/1793/dataset.csv
+
+git_push.bat

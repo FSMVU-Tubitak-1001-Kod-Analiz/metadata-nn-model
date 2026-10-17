@@ -17,12 +17,19 @@ Code fine-tuning is meant for small sets (it keeps every file's text in memory):
   - Gradient checkpointing is on, to fit max_files x code_max_length tokens per change.
 
 Settings come from `finetune` in the config (defaults below); the rest come from `train`:
-    model: bert-base-uncased   max_length: 128     pool: cls | mean    encoder_lr: 2.0e-5
+    model: bert-base-uncased   max_length: 128     pool: cls | mean | pooler   encoder_lr: 2.0e-5
     code_model: microsoft/codebert-base           code_max_length: 512 code_lr: 2.0e-5
     max_files: 8               micro_batch: 8      grad_checkpointing: true
-    epochs: 30                 patience: 6         fp16: true
+    epochs: 30                 patience: 6 (0 = no early stopping)          fp16: true
     batch_size: (train.batch_size)                 head_lr: (train.lr)
+    share_encoder: false       message read by the code encoder (needs --code-ft), as in CoLaRe
+    layer_lrs: null            [low, mid, high]: CoLaRe-style layer-wise rates for the encoders
+                               (embeddings + layers 0-2 / 3-6 / 7-11; the pooler is not trained)
+    encoder_weight_decay: 0.01 head_weight_decay: (train.weight_decay)
+    lr_schedule: plateau | none                    clip_grad: 1.0 (null = off)
+    class_weights: (train.class_weights)           tag: null (appended to the run name)
 CodeBERT pooling follows --embed-pool (mean | cls | pooler).
+The best epoch on validation macro-F1 is always the one tested, also when early stopping is off.
 
 The message text is built like the `message` embedding input (embeddings.inputs.message:
 columns + separator) and cached in <processed_dir>/messages.csv.
@@ -52,7 +59,9 @@ from commitclf.utils import get_device, set_seed
 DEFAULTS = {"model": "bert-base-uncased", "max_length": 128, "pool": "cls", "encoder_lr": 2.0e-5,
             "code_model": "microsoft/codebert-base", "code_max_length": 512, "code_lr": 2.0e-5,
             "max_files": 8, "micro_batch": 8, "grad_checkpointing": True,
-            "epochs": 30, "patience": 6, "fp16": True}
+            "epochs": 30, "patience": 6, "fp16": True,
+            "share_encoder": False, "layer_lrs": None, "encoder_weight_decay": 0.01,
+            "lr_schedule": "plateau", "clip_grad": 1.0, "class_weights": None, "tag": None}
 MAX_CODE_ROWS = 200_000
 
 
@@ -60,7 +69,27 @@ def settings(cfg: dict) -> dict:
     ft = {**DEFAULTS, **(cfg.get("finetune") or {})}
     ft.setdefault("batch_size", cfg["train"]["batch_size"])
     ft.setdefault("head_lr", cfg["train"]["lr"])
+    ft.setdefault("head_weight_decay", cfg["train"].get("weight_decay", 0.0))
+    if ft["class_weights"] is None:
+        ft["class_weights"] = cfg["train"].get("class_weights", True)
     return ft
+
+
+def encoder_groups(encoder: nn.Module, lr: float, layer_lrs, weight_decay: float) -> list[dict]:
+    """Optimizer groups for one transformer: one rate, or CoLaRe's three layer-wise rates."""
+    if not layer_lrs:
+        return [{"params": [p for p in encoder.parameters() if p.requires_grad], "lr": lr,
+                 "weight_decay": weight_decay}]
+    low, mid, high = layer_lrs
+    layers = encoder.encoder.layer
+    n = len(layers)
+    a, b = round(n * 3 / 12), round(n * 7 / 12)          # 12 layers: 0-2 / 3-6 / 7-11
+    if getattr(encoder, "pooler", None) is not None:     # CoLaRe never puts the pooler in the optimizer
+        encoder.pooler.requires_grad_(False)
+    params = lambda mods: [p for m in mods for p in m.parameters()]
+    return [{"params": params([encoder.embeddings, *layers[:a]]), "lr": low, "weight_decay": weight_decay},
+            {"params": params(layers[a:b]), "lr": mid, "weight_decay": weight_decay},
+            {"params": params(layers[b:]), "lr": high, "weight_decay": weight_decay}]
 
 
 def load_messages(cfg: dict) -> pd.Series:
@@ -223,21 +252,22 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
     fp16 = bool(ft["fp16"]) and device.type == "cuda"
     sets = build_sets(cfg, spec, fold, table)
 
-    msg_encoder, msg_tokens = None, {p: None for p in sets}
-    if messages is not None:
-        tokenizer = AutoTokenizer.from_pretrained(ft["model"])
-        for p, cs in sets.items():
-            texts = messages.reindex(cs.units["unit_key"]).fillna("").astype(str).tolist()
-            msg_tokens[p] = tokenizer(texts, truncation=True, padding="max_length", max_length=ft["max_length"],
-                                      return_tensors="pt")
-        msg_encoder = AutoModel.from_pretrained(ft["model"])
-
+    share = bool(ft["share_encoder"]) and code_texts is not None and messages is not None
     code_encoder, code_tokenizer = None, None
     if code_texts is not None:
         code_tokenizer = AutoTokenizer.from_pretrained(ft["code_model"])
         code_encoder = AutoModel.from_pretrained(ft["code_model"])
         if ft["grad_checkpointing"]:
             code_encoder.gradient_checkpointing_enable()
+
+    msg_encoder, msg_tokens = None, {p: None for p in sets}
+    if messages is not None:
+        tokenizer = code_tokenizer if share else AutoTokenizer.from_pretrained(ft["model"])
+        for p, cs in sets.items():
+            texts = messages.reindex(cs.units["unit_key"]).fillna("").astype(str).tolist()
+            msg_tokens[p] = tokenizer(texts, truncation=True, padding="max_length", max_length=ft["max_length"],
+                                      return_tensors="pt")
+        msg_encoder = code_encoder if share else AutoModel.from_pretrained(ft["model"])
     batchers = {p: Batcher(table, cs, msg_tokens[p], code_texts, code_tokenizer, ft["code_max_length"], churn,
                            ft["max_files"]) for p, cs in sets.items()}
 
@@ -248,15 +278,15 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
     print(f"Fold {fold}: " + ", ".join(f"{p}={len(s)}" for p, s in sets.items())
           + f" | file dim {file_dim}, metadata dim {meta_dim}"
           + (f" | code: {ft['code_model']} on {list(code_texts)}, <= {ft['max_files']} files" if code_texts else "")
-          + (f" | message: {ft['model']}" if messages is not None else ""))
+          + (f" | message: {ft['code_model'] + ' (shared)' if share else ft['model']}" if messages is not None else ""))
 
-    weight = class_weights(sets["train"].y, len(labels)).to(device) if t.get("class_weights", True) else None
+    weight = class_weights(sets["train"].y, len(labels)).to(device) if ft["class_weights"] else None
     criterion = nn.CrossEntropyLoss(weight=weight)
-    groups = [{"params": model.base.parameters(), "lr": ft["head_lr"], "weight_decay": t.get("weight_decay", 0.0)}]
-    if msg_encoder is not None:
-        groups.append({"params": model.msg_encoder.parameters(), "lr": ft["encoder_lr"], "weight_decay": 0.01})
+    groups = [{"params": model.base.parameters(), "lr": ft["head_lr"], "weight_decay": ft["head_weight_decay"]}]
+    if msg_encoder is not None and not share:
+        groups += encoder_groups(model.msg_encoder, ft["encoder_lr"], ft["layer_lrs"], ft["encoder_weight_decay"])
     if code_encoder is not None:
-        groups.append({"params": model.code_encoder.parameters(), "lr": ft["code_lr"], "weight_decay": 0.01})
+        groups += encoder_groups(model.code_encoder, ft["code_lr"], ft["layer_lrs"], ft["encoder_weight_decay"])
     optimizer = torch.optim.AdamW(groups)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=t.get("lr_factor", 0.5), patience=t.get("lr_patience", 3))
@@ -284,23 +314,26 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
             scaler.scale(loss / accum).backward()
             step += 1
             if step % accum == 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                if ft["clip_grad"]:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), ft["clip_grad"])
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
             total += loss.item() * len(y)
             seen += len(y)
         if step % accum:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if ft["clip_grad"]:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), ft["clip_grad"])
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
         y_val, p_val = predict(model, batchers["val"], device, micro)
         val = classification_metrics(y_val, p_val.argmax(1), p_val, labels)
         lrs = [g["lr"] for g in optimizer.param_groups]
-        scheduler.step(val["f1"])
+        if ft["lr_schedule"] == "plateau":
+            scheduler.step(val["f1"])
         history.append({"epoch": epoch, **{f"lr{i}": lr for i, lr in enumerate(lrs)}, "train_loss": total / seen,
                         **{f"val_{k}": v for k, v in val.items()}})
         tqdm.write(f"[{epoch:3d}] train loss={total / seen:.4f} | val acc={val['accuracy']:.4f} "
@@ -308,7 +341,7 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
         if val["f1"] > best_f1:
             best_f1, best_epoch = val["f1"], epoch
             best_state = {k: v.detach().to("cpu", copy=True) for k, v in model.state_dict().items()}
-        elif epoch - best_epoch >= ft["patience"]:
+        elif ft["patience"] and epoch - best_epoch >= ft["patience"]:
             tqdm.write(f"Early stop: no val F1 improvement for {ft['patience']} epochs")
             break
     bar.close()
@@ -344,7 +377,9 @@ def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None, code: 
         raise ValueError("--code-ft needs code inputs (--code patch ...)")
     spec = {**spec, "metadata": [g for g in spec["metadata"] if g != "message"]}
     ft = settings(cfg)
-    tags = (["code-ft"] if code else []) + (["msg-ft"] if message else [])
+    if ft["lr_schedule"] not in ("plateau", "none"):
+        raise ValueError("finetune.lr_schedule must be plateau or none")
+    tags = (["code-ft"] if code else []) + (["msg-ft"] if message else []) + ([ft["tag"]] if ft["tag"] else [])
     default = f"{spec['model']}_{spec['split']}" + (f"_{spec['subset']}" if spec["subset"] else "") + "_" + "_".join(tags)
     run_dir = resolve(cfg, cfg["train"]["out_dir"]) / (name or f"finetune/{default}")
     run_dir.mkdir(parents=True, exist_ok=True)
