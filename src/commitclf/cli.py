@@ -6,6 +6,7 @@
     embed       CodeBERT / BERT vectors per file row (resumable)
     train       train/evaluate the change classifier
     finetune    same, with the message BERT and/or CodeBERT fine-tuned end to end (see finetune.py)
+    colare      CoLaRe's own model and training recipe on our folds (see sota/colare.py)
     baselines   train/evaluate the classic ML models
     grid        run the experiment grid in configs/grid.yaml
     explain     shap | permutation | weights | tokens | occlusion on finished runs (see explain.py)
@@ -68,6 +69,22 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--code-ft", action="store_true", help="also fine-tune CodeBERT on the files' code inputs")
     p.add_argument("--no-message", action="store_true", help="don't use the message (code fine-tuning only)")
     add_experiment_args(p)
+
+    p = sub.add_parser("colare", help="run CoLaRe's model (sotas/COLARE-main) on our folds")
+    p.add_argument("--variant", default="CCModel",
+                   choices=["CCModel", "CodeFeatModel", "MessageCodeModel", "MessageFeatModel"],
+                   help="CCModel = full CoLaRe (message + code + counts); CodeFeatModel = no message")
+    p.add_argument("--split", default="given", choices=SCHEMES)
+    p.add_argument("--folds", nargs="+", default=["1"], help="fold numbers or 'all' (default: 1)")
+    p.add_argument("--colare-dir", default="sotas/COLARE-main")
+    p.add_argument("--src", default="sotas/COLARE-main/dataset/1793/dataset.csv")
+    p.add_argument("--model-path", help="local CodeBERT to use instead of microsoft/codebert-base")
+    p.add_argument("--epochs", type=int, help="default 10 (CoLaRe: epochs 0..9)")
+    p.add_argument("--batch-size", type=int, help="default 3 (CoLaRe)")
+    p.add_argument("--grad-acc", type=int, help="default 2 (CoLaRe)")
+    p.add_argument("--file-limit", type=int, help="default 5 (CoLaRe, Java set)")
+    p.add_argument("--hunk-limit", type=int, help="default 2 (CoLaRe, Java set)")
+    p.add_argument("--name", help="output folder under train.out_dir (default colare/<variant>_<split>)")
 
     p = sub.add_parser("baselines", help="train the classic ML baselines")
     p.add_argument("--features", choices=["code", "metadata", "both"], help="overrides baselines.features")
@@ -132,6 +149,12 @@ def main(argv: list[str] | None = None) -> None:
         else:
             explain.run_tokens(cfg, args.run, fold=(folds or [1])[0], n=args.n, steps=args.steps,
                                max_files=args.max_files, target=args.target, ig_batch=args.ig_batch)
+    elif args.command == "colare":
+        from commitclf.sota import colare
+        colare.run(cfg, parse_folds(args.folds, cfg, args.split), args.variant, args.split, args.colare_dir,
+                   args.src, model_path=args.model_path, name=args.name, epochs=args.epochs,
+                   batch_size=args.batch_size, grad_acc=args.grad_acc, file_limit=args.file_limit,
+                   hunk_limit=args.hunk_limit)
     elif args.command == "grid":
         from commitclf import grid
         grid.run(cfg, args.grid, blocks=args.blocks, dry_run=args.dry_run, force=args.force,
