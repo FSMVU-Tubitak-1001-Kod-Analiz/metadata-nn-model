@@ -18,6 +18,10 @@ What is ours:
   - the tested epoch: best validation macro-F1 (their CV mode has no validation set and tests
     the last epoch)
   - metrics, predictions and the output layout: the same as `train` / `finetune`
+  - one guard: an optimizer step whose gradients are not finite is skipped (and counted in
+    history.csv). Their gate divides by ||H|| with H = g * W n + h_bias and h_bias starts at
+    zero, so a commit whose 29 counts are all zero (12 in this set) gives NaN gradients if it is
+    in the very first optimizer step; without the guard the whole fold collapses to NaN
 
 Their package `multimodal_transformers` (pinned to torch 1.13 / transformers 4.27) is replaced by
 a minimal stand-in for the only part their models use: TabularConfig and TabularFeatCombiner with
@@ -224,7 +228,7 @@ def train_fold(cfg: dict, variant: str, split: str, fold: int, raw: pd.DataFrame
     for epoch in range(1, opts["epochs"] + 1):
         model.train()
         optimizer.zero_grad()
-        total, seen = 0.0, 0
+        total, seen, skipped = 0.0, 0, 0
         for batch in tqdm(train_loader, desc=f"{run_dir.name} fold {fold} epoch {epoch}", leave=False):
             batch = {k: v.to(device) for k, v in batch.items()}
             loss = criterion(model(**batch), batch["labels"])
@@ -233,12 +237,18 @@ def train_fold(cfg: dict, variant: str, split: str, fold: int, raw: pd.DataFrame
             (loss / opts["grad_acc"]).backward()
             global_step += 1
             if global_step % opts["grad_acc"] == 0:
-                optimizer.step()
+                grads = [p.grad for p in model.parameters() if p.grad is not None]
+                if all(torch.isfinite(g).all() for g in grads):
+                    optimizer.step()
+                else:
+                    skipped += 1
                 optimizer.zero_grad()
         y_val, p_val = to_our_order(*predict(model, eval_loaders["val"], device), labels)
         val = classification_metrics(y_val, p_val.argmax(1), p_val, labels)
-        history.append({"epoch": epoch, "train_loss": total / seen, **{f"val_{k}": v for k, v in val.items()}})
-        tqdm.write(f"[{epoch:3d}] train loss={total / seen:.4f} | val acc={val['accuracy']:.4f} f1={val['f1']:.4f}")
+        history.append({"epoch": epoch, "train_loss": total / seen, "skipped_steps": skipped,
+                        **{f"val_{k}": v for k, v in val.items()}})
+        tqdm.write(f"[{epoch:3d}] train loss={total / seen:.4f} | val acc={val['accuracy']:.4f} f1={val['f1']:.4f}"
+                   + (f" | skipped {skipped} non-finite steps" if skipped else ""))
         if val["f1"] > best_f1:
             best_f1, best_epoch = val["f1"], epoch
             best_state = {k: v.detach().to("cpu", copy=True) for k, v in model.state_dict().items()}
@@ -286,5 +296,10 @@ def run(cfg: dict, folds: list[int], variant: str, split: str, colare_dir: str, 
     (run_dir / "spec.json").write_text(json.dumps({"method": "CoLaRe", "variant": variant, "split": split,
                                                    **opts, "selection": "best val macro-F1"}, indent=2))
     print(f"Run {run_dir.name}: {opts}")
-    rows = [{"fold": f, **train_fold(cfg, variant, split, f, raw, mods, opts, run_dir)} for f in folds]
+    for f in folds:
+        train_fold(cfg, variant, split, f, raw, mods, opts, run_dir)
+    # summary over every finished fold in the run folder, so a single fold can be rerun
+    rows = [{"fold": int(d.name[4:]), **json.loads((d / "test_metrics.json").read_text())}
+            for d in sorted(run_dir.glob("fold*"), key=lambda d: int(d.name[4:]))
+            if (d / "test_metrics.json").exists()]
     return summarize(rows, run_dir / "summary.csv")
