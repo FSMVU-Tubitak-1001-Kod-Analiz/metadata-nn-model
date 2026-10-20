@@ -21,7 +21,10 @@ What is ours:
   - one guard: an optimizer step whose gradients are not finite is skipped (and counted in
     history.csv). Their gate divides by ||H|| with H = g * W n + h_bias and h_bias starts at
     zero, so a commit whose 29 counts are all zero (12 in this set) gives NaN gradients if it is
-    in the very first optimizer step; without the guard the whole fold collapses to NaN
+    in the very first optimizer step; without the guard the whole fold collapses to NaN.
+    Gradients are cleared with model.zero_grad(): their pooler is in no optimizer group, so
+    optimizer.zero_grad() never clears its gradient (harmless in their code, but it would keep
+    a NaN there forever and make the guard skip every step)
 
 Their package `multimodal_transformers` (pinned to torch 1.13 / transformers 4.27) is replaced by
 a minimal stand-in for the only part their models use: TabularConfig and TabularFeatCombiner with
@@ -227,7 +230,7 @@ def train_fold(cfg: dict, variant: str, split: str, fold: int, raw: pd.DataFrame
     best_f1, best_epoch, best_state, history, global_step = -1.0, 0, None, [], 0
     for epoch in range(1, opts["epochs"] + 1):
         model.train()
-        optimizer.zero_grad()
+        model.zero_grad(set_to_none=True)
         total, seen, skipped = 0.0, 0, 0
         for batch in tqdm(train_loader, desc=f"{run_dir.name} fold {fold} epoch {epoch}", leave=False):
             batch = {k: v.to(device) for k, v in batch.items()}
@@ -237,12 +240,14 @@ def train_fold(cfg: dict, variant: str, split: str, fold: int, raw: pd.DataFrame
             (loss / opts["grad_acc"]).backward()
             global_step += 1
             if global_step % opts["grad_acc"] == 0:
-                grads = [p.grad for p in model.parameters() if p.grad is not None]
+                grads = [p.grad for g in optimizer.param_groups for p in g["params"] if p.grad is not None]
                 if all(torch.isfinite(g).all() for g in grads):
                     optimizer.step()
                 else:
                     skipped += 1
-                optimizer.zero_grad()
+                # model.zero_grad, not optimizer.zero_grad: the pooler is in no optimizer group, so the
+                # optimizer would never clear its gradient and one NaN there would block every later step
+                model.zero_grad(set_to_none=True)
         y_val, p_val = to_our_order(*predict(model, eval_loaders["val"], device), labels)
         val = classification_metrics(y_val, p_val.argmax(1), p_val, labels)
         history.append({"epoch": epoch, "train_loss": total / seen, "skipped_steps": skipped,
