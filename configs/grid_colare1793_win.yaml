@@ -1,0 +1,14 @@
+# Long patches: windows of up to 512 tokens cut at hunk boundaries (at most 8 per file), instead of
+# truncating each file's patch at 512 tokens. Held-out repos only. First embed the windows once:
+#   python -m commitclf -c configs/colare1793.yaml embed-windows patch_win
+#   python -m commitclf -c configs/colare1793.yaml grid --grid configs/grid_colare1793_win.yaml
+folds: all
+
+runs:
+  - block: win                        # 3 inputs x 2 models = 6
+    model: [code, gated]
+    split: repo
+    code:
+      - [patch]                       # reference: truncated at 512 tokens
+      - [patch_winmean]               # all windows, plain mean (no model change)
+      - [patch_win]                   # all windows, learned attention per file

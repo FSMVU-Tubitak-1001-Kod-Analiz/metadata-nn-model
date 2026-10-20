@@ -48,6 +48,11 @@ embeddings:
     patch_before: {model: codebert, columns: [patch_before]}
     patch_after: {model: codebert, columns: [patch_after]}
     message: {model: bert, columns: [commit_message]}   # legitimate input on this set (all prior work uses it)
+  # Windowed inputs (python -m commitclf embed-windows <name>): one vector per window of up to
+  # max_length tokens, cut at hunk boundaries, at most max_windows per file. As a code input:
+  # `patch_win` (attention over windows in the model) or `patch_winmean` (plain mean, precomputed).
+  windows:
+    patch_win: {model: codebert, column: patch, max_length: 512, max_windows: 8}
 
 experiment:
   model: concat

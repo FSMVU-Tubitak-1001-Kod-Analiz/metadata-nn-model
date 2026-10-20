@@ -55,6 +55,22 @@ class FilePool(nn.Module):
         return (weights.unsqueeze(-1) * h).sum(1)
 
 
+class WindowPool(nn.Module):
+    """Windows of each file [N, W, D] (+ mask [N, W]) -> one vector per file [N, D], by attention."""
+
+    def __init__(self, dim: int, attn_dim: int = 128):
+        super().__init__()
+        self.score = nn.Sequential(nn.Linear(dim, attn_dim), nn.Tanh(), nn.Linear(attn_dim, 1))
+        self.last_weights: torch.Tensor | None = None   # [N, W] of the last batch
+
+    def forward(self, w: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        w = w.float()
+        scores = self.score(w).squeeze(-1).masked_fill(~mask, float("-inf"))
+        weights = torch.softmax(scores, dim=1)
+        self.last_weights = weights.detach()
+        return (weights.unsqueeze(-1) * w).sum(1)
+
+
 class FileBranch(nn.Module):
     """Encode every file with a shared MLP, then pool to one vector per change."""
 
@@ -108,12 +124,14 @@ class AttentionFusion(nn.Module):
 class ChangeClassifier(nn.Module):
     def __init__(self, model_type: str, file_dim: int, meta_dim: int, n_classes: int, *,
                  file_hidden: list[int], metadata_hidden: list[int], head_hidden: list[int],
-                 fusion_dim: int, file_pool: str, dropout: float = 0.2):
+                 fusion_dim: int, file_pool: str, dropout: float = 0.2, window_dims: list[int] | None = None):
         super().__init__()
         if model_type not in MODEL_TYPES:
             raise ValueError(f"model type must be one of {MODEL_TYPES}, got '{model_type}'")
         self.model_type = model_type
-        self.files = FileBranch(file_dim, file_hidden, dropout, file_pool)
+        # Windowed code inputs: attention over each file's windows, appended to the file vector.
+        self.window_pools = nn.ModuleList([WindowPool(d) for d in (window_dims or [])])
+        self.files = FileBranch(file_dim + sum(window_dims or []), file_hidden, dropout, file_pool)
         side_a = self.files.out_dim
 
         self.meta = mlp(meta_dim, metadata_hidden, dropout) if model_type != "code" and meta_dim else None
@@ -132,7 +150,14 @@ class ChangeClassifier(nn.Module):
         self.head = mlp(head_in, head_hidden, dropout)
         self.out = nn.Linear(head_hidden[-1], n_classes)
 
-    def forward(self, files: torch.Tensor, mask: torch.Tensor, meta: torch.Tensor) -> torch.Tensor:
+    def forward(self, files: torch.Tensor, mask: torch.Tensor, meta: torch.Tensor, windows=None) -> torch.Tensor:
+        if len(self.window_pools):
+            parts = [files.float()]
+            for pool, (w, wm) in zip(self.window_pools, windows):
+                per_file = torch.zeros(*mask.shape, w.shape[-1], device=files.device, dtype=torch.float32)
+                per_file[mask] = pool(w, wm)
+                parts.append(per_file)
+            files = torch.cat(parts, dim=2)
         a = self.files(files, mask)
         b = self.meta(meta) if self.meta is not None else None
         if self.fusion is not None:

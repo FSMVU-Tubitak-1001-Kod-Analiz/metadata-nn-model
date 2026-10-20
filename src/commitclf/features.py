@@ -34,7 +34,12 @@ class _Delta:
 
 
 def load_code_input(cfg: dict, name: str, pool: str):
-    """A stored embedding input, or a derived one from DERIVED_CODE."""
+    """A stored embedding input, a derived one from DERIVED_CODE, or `<window input>mean`
+    (the plain mean of a windowed input's windows, see windows.py)."""
+    from commitclf.windows import window_mean, window_specs
+    wins = window_specs(cfg)
+    if name.endswith("mean") and name[:-4] in wins:
+        return window_mean(cfg, name[:-4], pool)
     if name in DERIVED_CODE:
         a, b = DERIVED_CODE[name]
         return _Delta(load_input(cfg, a, pool), load_input(cfg, b, pool))
@@ -86,7 +91,17 @@ class FileTable:
             raise ValueError(f"Unknown similarity '{sim}' (use raw or white)")
         rows = load_rows(cfg)
         self.unit_rows = pd.Series(np.arange(len(rows))).groupby(rows["unit_key"].to_numpy()).agg(list)
-        blocks = [load_code_input(cfg, name, embed_pool) for name in code]
+        # Windowed inputs (embeddings.windows) stay per window; the model pools them per file.
+        from commitclf.windows import load_windows, window_specs
+        windowed = [name for name in code if name in window_specs(cfg)]
+        self.windows = {}
+        for name in windowed:
+            vecs, offsets = load_windows(cfg, name, embed_pool)
+            if len(offsets) != len(rows) + 1:
+                raise ValueError(f"Windowed input '{name}' has {len(offsets) - 1} rows, rows.csv has {len(rows)}")
+            self.windows[name] = (torch.from_numpy(np.ascontiguousarray(vecs)), offsets)
+        self.window_dims = [v.shape[1] for v, _ in self.windows.values()]
+        blocks = [load_code_input(cfg, name, embed_pool) for name in code if name not in self.windows]
         facts = rows[[c for c in rows.columns if c.startswith("file__")]].to_numpy(dtype=np.float16) \
             if with_facts else np.zeros((len(rows), 0), dtype=np.float16)
         self.sim = sim if with_facts else None
@@ -219,14 +234,35 @@ def collate(table: FileTable, cs: ChangeSet, idx: torch.Tensor) -> tuple[torch.T
     return files, mask, cs.meta[idx], cs.y[idx]
 
 
+def collate_windows(table: FileTable, cs: ChangeSet, idx: torch.Tensor) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """For each windowed input: windows of the batch's real files (in mask order) [N, W, D] and mask [N, W]."""
+    starts, ends = cs.offsets[idx], cs.offsets[idx + 1]
+    rows = torch.cat([cs.rows[s:e] for s, e in zip(starts.tolist(), ends.tolist())]).numpy()
+    out = []
+    for vecs, offsets in table.windows.values():
+        a, b = offsets[rows], offsets[rows + 1]
+        w_max = int((b - a).max())
+        win = torch.zeros(len(rows), w_max, vecs.shape[1], dtype=torch.float16)
+        wmask = torch.zeros(len(rows), w_max, dtype=torch.bool)
+        for i, (s, e) in enumerate(zip(a.tolist(), b.tolist())):
+            win[i, :e - s] = vecs[s:e]
+            wmask[i, :e - s] = True
+        out.append((win, wmask))
+    return out
+
+
 def batches(table: FileTable, cs: ChangeSet, batch_size: int, shuffle: bool, generator=None):
+    """Batches of (files, mask, meta, y), plus the per-file windows when the table has windowed inputs."""
     order = torch.randperm(len(cs), generator=generator) if shuffle else torch.arange(len(cs))
     n = len(order)
     for s in range(0, n, batch_size):
         idx = order[s:s + batch_size]
         if shuffle and len(idx) == 1:   # BatchNorm can't train on a single sample
             continue
-        yield collate(table, cs, idx)
+        if getattr(table, "windows", None):
+            yield (*collate(table, cs, idx), collate_windows(table, cs, idx))
+        else:
+            yield collate(table, cs, idx)
 
 
 def pooled_code(table: FileTable, cs: ChangeSet) -> np.ndarray:

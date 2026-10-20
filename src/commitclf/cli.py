@@ -66,6 +66,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--overwrite", action="store_true")
     p.add_argument("--copy-from", metavar="CONFIG", help="copy finished embeddings from another config (this data must be a subset of its rows)")
 
+    p = sub.add_parser("embed-windows", help="windowed embeddings of one input (see windows.py)")
+    p.add_argument("name", help="an entry of embeddings.windows, e.g. patch_win")
+    p.add_argument("--overwrite", action="store_true")
+
     add_experiment_args(sub.add_parser("train", help="train the change classifier"))
     p = sub.add_parser("finetune", help="train with fine-tuned encoders (message and/or code)")
     p.add_argument("--code-ft", action="store_true", help="also fine-tune CodeBERT on the files' code inputs")
@@ -128,6 +132,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "splits":
         from commitclf.data import splits
         splits.run(cfg)
+    elif args.command == "embed-windows":
+        from commitclf import windows
+        windows.run(cfg, args.name, overwrite=args.overwrite)
     elif args.command == "embed":
         from commitclf import embeddings
         if args.copy_from:

@@ -36,12 +36,12 @@ def default_name(spec: dict) -> str:
     return name + (f"_sim-{spec['sim']}" if spec.get("sim") else "")
 
 
-def make_model(cfg: dict, spec: dict, file_dim: int, meta_dim: int) -> ChangeClassifier:
+def make_model(cfg: dict, spec: dict, file_dim: int, meta_dim: int, window_dims: list[int] | None = None) -> ChangeClassifier:
     t = cfg["train"]
     return ChangeClassifier(
         spec["model"], file_dim, meta_dim, len(cfg["labels"]),
         file_hidden=t["file_hidden"], metadata_hidden=t["metadata_hidden"], head_hidden=t["head_hidden"],
-        fusion_dim=t["fusion_dim"], file_pool=spec["file_pool"], dropout=t["dropout"],
+        fusion_dim=t["fusion_dim"], file_pool=spec["file_pool"], dropout=t["dropout"], window_dims=window_dims,
     )
 
 
@@ -54,13 +54,21 @@ def to(device, *tensors):
     return [t.to(device, non_blocking=True) for t in tensors]
 
 
+def unpack(batch, device):
+    """(files, mask, meta, y, windows) on the device; windows is None without windowed inputs."""
+    files, mask, meta, y = to(device, *batch[:4])
+    windows = [(w.to(device, non_blocking=True), m.to(device, non_blocking=True)) for w, m in batch[4]] \
+        if len(batch) > 4 else None
+    return files, mask, meta, y, windows
+
+
 def train_epoch(model, table, cs, criterion, optimizer, device, batch_size, generator) -> dict:
     model.train()
     total, correct, seen, fusion_w = 0.0, 0, 0, []
-    for files, mask, meta, y in batches(table, cs, batch_size, shuffle=True, generator=generator):
-        files, mask, meta, y = to(device, files, mask, meta, y)
+    for batch in batches(table, cs, batch_size, shuffle=True, generator=generator):
+        files, mask, meta, y, windows = unpack(batch, device)
         optimizer.zero_grad()
-        logits = model(files, mask, meta)
+        logits = model(files, mask, meta, windows)
         loss = criterion(logits, y)
         loss.backward()
         optimizer.step()
@@ -79,9 +87,9 @@ def train_epoch(model, table, cs, criterion, optimizer, device, batch_size, gene
 def predict(model, table, cs, criterion, device, batch_size) -> tuple[float, np.ndarray, np.ndarray]:
     model.eval()
     total, probs, ys = 0.0, [], []
-    for files, mask, meta, y in batches(table, cs, batch_size, shuffle=False):
-        files, mask, meta, y = to(device, files, mask, meta, y)
-        logits = model(files, mask, meta)
+    for batch in batches(table, cs, batch_size, shuffle=False):
+        files, mask, meta, y, windows = unpack(batch, device)
+        logits = model(files, mask, meta, windows)
         total += criterion(logits, y).item() * len(y)
         probs.append(torch.softmax(logits.float(), 1).cpu())
         ys.append(y.cpu())
@@ -99,9 +107,10 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, run_dir: Path
     device = get_device(t.get("device", "cuda"))
     sets = build_sets(cfg, spec, fold, table)
     print(f"Fold {fold}: " + ", ".join(f"{p}={len(s)}" for p, s in sets.items())
-          + f" | file dim {table.dim}, metadata dim {sets['train'].meta.shape[1]}")
+          + f" | file dim {table.dim}" + (f" + windows {table.window_dims}" if table.window_dims else "")
+          + f", metadata dim {sets['train'].meta.shape[1]}")
 
-    model = make_model(cfg, spec, table.dim, sets["train"].meta.shape[1]).to(device)
+    model = make_model(cfg, spec, table.dim, sets["train"].meta.shape[1], table.window_dims).to(device)
     weight = class_weights(sets["train"].y, len(labels)).to(device) if t.get("class_weights", True) else None
     criterion = nn.CrossEntropyLoss(weight=weight)
     plain = nn.CrossEntropyLoss()   # unweighted loss for reporting
