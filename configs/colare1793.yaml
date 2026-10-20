@@ -53,6 +53,9 @@ embeddings:
   # `patch_win` (attention over windows in the model) or `patch_winmean` (plain mean, precomputed).
   windows:
     patch_win: {model: codebert, column: patch, max_length: 512, max_windows: 8}
+    # before / after sides per hunk, same hunk grouping on both sides (window k covers the same hunks)
+    patch_before_win: {model: codebert, column: patch, side: before, max_length: 512, max_windows: 8}
+    patch_after_win: {model: codebert, column: patch, side: after, max_length: 512, max_windows: 8}
 
 experiment:
   model: concat

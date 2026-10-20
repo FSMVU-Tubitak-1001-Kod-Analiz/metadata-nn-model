@@ -1,14 +1,24 @@
 # Long patches: windows of up to 512 tokens cut at hunk boundaries (at most 8 per file), instead of
-# truncating each file's patch at 512 tokens. Held-out repos only. First embed the windows once:
+# truncating each text at 512 tokens. Held-out repos only. First embed the windows once:
 #   python -m commitclf -c configs/colare1793.yaml embed-windows patch_win
+#   python -m commitclf -c configs/colare1793.yaml embed-windows patch_before_win
+#   python -m commitclf -c configs/colare1793.yaml embed-windows patch_after_win
 #   python -m commitclf -c configs/colare1793.yaml grid --grid configs/grid_colare1793_win.yaml
 folds: all
 
 runs:
-  - block: win                        # 3 inputs x 2 models = 6
+  - block: win                        # the diff text: 3 inputs x 2 models = 6
     model: [code, gated]
     split: repo
     code:
       - [patch]                       # reference: truncated at 512 tokens
       - [patch_winmean]               # all windows, plain mean (no model change)
       - [patch_win]                   # all windows, learned attention per file
+
+  - block: win                        # before / after sides: 3 inputs x 2 models = 6
+    model: [code, gated]
+    split: repo
+    code:
+      - [patch_before, patch_after]                  # reference: each side truncated at 512 tokens
+      - [patch_before_winmean, patch_after_winmean]  # aligned windows, plain mean per side
+      - [patch_before_win, patch_after_win]          # aligned windows, attention per side

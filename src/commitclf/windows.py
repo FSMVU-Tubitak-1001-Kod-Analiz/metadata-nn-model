@@ -1,12 +1,18 @@
 """Windowed embeddings: every window of a file's text gets its own vector, so long files are not cut at 512 tokens.
 
-A file's text (e.g. its `patch`) is split at hunk headers ('@@'). Consecutive hunks are packed
-into windows of at most `max_length` tokens; a hunk longer than that is cut into several windows.
-At most `max_windows` windows per file are kept (the first ones). An empty text gives one empty window.
+A file's patch is split at hunk headers ('@@'). Consecutive hunks are packed into windows of at
+most `max_length` tokens; a hunk longer than that is cut into several windows. At most
+`max_windows` windows per file are kept (the first ones). An empty text gives one empty window.
+
+With `side: before` / `side: after`, each hunk is first turned into that side (context + removed /
+context + added lines, cleaned like `embed` cleans patch_before / patch_after), and the packing is
+decided on the longer side of each hunk, so the before and after windows cover the same hunks.
 
 Config (`embeddings.windows`), e.g.
     windows:
       patch_win: {model: codebert, column: patch, max_length: 512, max_windows: 8}
+      patch_before_win: {model: codebert, column: patch, side: before, max_length: 512, max_windows: 8}
+      patch_after_win: {model: codebert, column: patch, side: after, max_length: 512, max_windows: 8}
 
 `python -m commitclf embed-windows patch_win` writes to the embeddings dir:
     patch_win.cls.npy / patch_win.mean.npy   [n_windows, hidden] float16, windows of row 0 first, then row 1 ...
@@ -37,37 +43,82 @@ def window_specs(cfg: dict) -> dict:
     return cfg["embeddings"].get("windows") or {}
 
 
-def make_windows(text: str, tokenizer, max_length: int, max_windows: int) -> tuple[list[list[int]], int]:
-    """Token-id windows (without special tokens) of one text, and the number before capping."""
-    body = max_length - 2
+def split_hunks(text: str) -> list[str]:
+    """A unified diff -> one text per hunk, each starting with its '@@' line."""
     hunks, cur = [], []
     for line in str(text).splitlines():
         if line.startswith("@@") and cur:
-            hunks.append(cur)
+            hunks.append("\n".join(cur))
             cur = []
         cur.append(line)
     if cur:
-        hunks.append(cur)
-    if not hunks:
-        return [[]], 1
-    ids = tokenizer(["\n".join(h) for h in hunks], add_special_tokens=False)["input_ids"]
-    newline = tokenizer("\n", add_special_tokens=False)["input_ids"]
-    windows, cur = [], []
-    for h in ids:
-        if len(h) > body:                          # a long hunk: its own windows
+        hunks.append("\n".join(cur))
+    return hunks
+
+
+def _plan(lengths: list[int], body: int) -> list[list[tuple[int, int, int]]]:
+    """Group hunks into windows: each window is a list of (hunk, part, n_parts).
+    Consecutive hunks are packed while they fit (+1 token for the newline between them);
+    a hunk longer than `body` gets n_parts = ceil(length / body) windows of its own."""
+    windows, cur, used = [], [], 0
+    for h, n in enumerate(lengths):
+        if n > body:
             if cur:
                 windows.append(cur)
-                cur = []
-            windows += [h[i:i + body] for i in range(0, len(h), body)]
+                cur, used = [], 0
+            parts = -(-n // body)
+            windows += [[(h, p, parts)] for p in range(parts)]
             continue
-        extra = newline if cur else []
-        if len(cur) + len(extra) + len(h) > body:
+        need = n + (1 if cur else 0)
+        if cur and used + need > body:
             windows.append(cur)
-            cur, extra = [], []
-        cur = cur + extra + h
+            cur, used, need = [], 0, n
+        cur.append((h, 0, 1))
+        used += need
     if cur or not windows:
         windows.append(cur)
-    return windows[:max_windows], len(windows)
+    return windows
+
+
+def _build(plan: list[list[tuple[int, int, int]]], ids: list[list[int]], newline: list[int]) -> list[list[int]]:
+    out = []
+    for window in plan:
+        w = []
+        for h, part, parts in window:
+            size = -(-len(ids[h]) // parts) if parts > 1 else len(ids[h])
+            piece = ids[h][part * size:(part + 1) * size]
+            w += (newline if w else []) + piece
+        out.append(w)
+    return out
+
+
+def make_windows(text: str, tokenizer, max_length: int, max_windows: int, side: str | None = None,
+                 clean: bool = False) -> tuple[list[list[int]], int]:
+    """Token-id windows (without special tokens) of one patch, and the number before capping.
+
+    side=None: windows of the patch text itself. side='before' / 'after': windows of that side of
+    each hunk (context + removed / context + added lines, as `patch_before` / `patch_after`), with
+    the hunk grouping decided on the longer of the two sides, so window k of the before side and
+    window k of the after side always cover the same hunks."""
+    from commitclf.data.java import clean_java, patch_after, patch_before
+    body = max_length - 2
+    hunks = split_hunks(text)
+    if not hunks:
+        return [[]], 1
+    newline = tokenizer("\n", add_special_tokens=False)["input_ids"]
+    if side is None:
+        ids = tokenizer(hunks, add_special_tokens=False)["input_ids"]
+        lengths = [len(i) for i in ids]
+    else:
+        prep = (lambda t: clean_java(t)) if clean else (lambda t: t)
+        sides = {"before": [prep(patch_before(h)) for h in hunks], "after": [prep(patch_after(h)) for h in hunks]}
+        if side not in sides:
+            raise ValueError(f"side must be before or after, got '{side}'")
+        ids_by_side = {k: tokenizer(v, add_special_tokens=False)["input_ids"] for k, v in sides.items()}
+        lengths = [max(len(a), len(b)) for a, b in zip(ids_by_side["before"], ids_by_side["after"])]
+        ids = ids_by_side[side]
+    plan = _plan(lengths, body)
+    return _build(plan, ids, newline)[:max_windows], len(plan)
 
 
 class WindowEncoder:
@@ -130,7 +181,10 @@ def run(cfg: dict, name: str, overwrite: bool = False) -> None:
                         cfg["embeddings"].get("fp16", True))
     max_len = min(spec.get("max_length", 512), model_spec.get("max_length", 512))
     max_win = spec.get("max_windows", 8)
-    print(f"Windows '{name}' over column '{spec['column']}': {max_len} tokens, at most {max_win} per file")
+    side = spec.get("side")
+    clean = bool(side) and cfg["embeddings"].get("clean_code", True)   # as `embed` does for patch_before/after
+    print(f"Windows '{name}' over column '{spec['column']}'" + (f", {side} side" if side else "")
+          + f": {max_len} tokens, at most {max_win} per file")
 
     for i, chunk in enumerate(tqdm(read_source(cfg, sorted(set(KEY_COLS) | {spec["column"]})), desc="chunks")):
         part = paths["parts"] / f"part_{i:05d}.npz"
@@ -140,7 +194,7 @@ def run(cfg: dict, name: str, overwrite: bool = False) -> None:
         idx = row_key(chunk).map(index)
         keep = idx.notna().to_numpy()
         texts = chunk.loc[keep, spec["column"]].fillna("").astype(str).tolist()
-        made = [make_windows(t, enc.tokenizer, max_len, max_win) for t in texts]
+        made = [make_windows(t, enc.tokenizer, max_len, max_win, side=side, clean=clean) for t in texts]
         flat = [w for ws, _ in made for w in ws]
         empty = np.zeros((0, enc.model.config.hidden_size), np.float16)
         cls, mean = enc(flat) if flat else (empty, empty)

@@ -13,6 +13,8 @@ from commitclf.train import SPEC_KEYS, make_spec
 LIST_FIELDS = ("code", "metadata")       # fields whose single value is itself a list
 FUSION_MODELS = ("concat", "gated", "attention")
 SHORT = {"content_before": "cb", "patch_before": "pb", "patch_after": "pa", "patch": "patch", "patch_delta": "pdelta", "patch_win": "pwin", "patch_winmean": "pwinmean",
+         "patch_before_win": "pbwin", "patch_after_win": "pawin",
+         "patch_before_winmean": "pbwinmean", "patch_after_winmean": "pawinmean",
          "change": "change", "repo": "repo", "message": "msg", "path": "path"}
 
 
