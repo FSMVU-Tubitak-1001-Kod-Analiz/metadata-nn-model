@@ -1,0 +1,12 @@
+# grid_delta.yaml for the CoLaRe set, on CoLaRe's folds and held-out repos:
+#   python -m commitclf -c configs/colare1793.yaml grid --grid configs/grid_colare1793_delta.yaml
+folds: all
+
+runs:
+  - block: delta                      # 3 inputs x 2 models x 2 splits = 12
+    model: [code, gated]
+    split: [given, repo]
+    code:
+      - [patch]
+      - [patch, patch_delta]
+      - [patch_delta]

@@ -15,6 +15,31 @@ PARTS = ("train", "val", "test")
 SUBSETS = (None, "single_commit")
 CHANGE_GROUPS = ("change", "path", "repo", "message")
 
+# Code inputs computed from two stored embeddings instead of read from `embed`:
+#   patch_delta = CodeBERT(patch_after) - CodeBERT(patch_before), element-wise per file.
+#   The shared context mostly cancels, so it mainly carries the added vs removed lines.
+DERIVED_CODE = {"patch_delta": ("patch_after", "patch_before")}
+
+
+class _Delta:
+    """a - b over two [n_rows, hidden] arrays, computed per slice (keeps memory-mapped inputs lazy)."""
+
+    def __init__(self, a, b):
+        if a.shape != b.shape:
+            raise ValueError(f"Embedding shapes differ: {a.shape} vs {b.shape}")
+        self.a, self.b, self.shape = a, b, a.shape
+
+    def __getitem__(self, idx):
+        return (np.asarray(self.a[idx], dtype=np.float32) - np.asarray(self.b[idx], dtype=np.float32)).astype(np.float16)
+
+
+def load_code_input(cfg: dict, name: str, pool: str):
+    """A stored embedding input, or a derived one from DERIVED_CODE."""
+    if name in DERIVED_CODE:
+        a, b = DERIVED_CODE[name]
+        return _Delta(load_input(cfg, a, pool), load_input(cfg, b, pool))
+    return load_input(cfg, name, pool)
+
 
 def encode_labels(labels: pd.Series, classes: list[str]) -> torch.Tensor:
     unknown = set(labels) - set(classes)
@@ -40,7 +65,7 @@ class FileTable:
     def __init__(self, cfg: dict, code: list[str], embed_pool: str, with_facts: bool):
         rows = load_rows(cfg)
         self.unit_rows = pd.Series(np.arange(len(rows))).groupby(rows["unit_key"].to_numpy()).agg(list)
-        blocks = [load_input(cfg, name, embed_pool) for name in code]
+        blocks = [load_code_input(cfg, name, embed_pool) for name in code]
         facts = rows[[c for c in rows.columns if c.startswith("file__")]].to_numpy(dtype=np.float16) \
             if with_facts else np.zeros((len(rows), 0), dtype=np.float16)
         dim = sum(b.shape[1] for b in blocks) + facts.shape[1]

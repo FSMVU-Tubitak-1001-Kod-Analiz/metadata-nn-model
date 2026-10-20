@@ -12,7 +12,7 @@ from commitclf.train import SPEC_KEYS, make_spec
 
 LIST_FIELDS = ("code", "metadata")       # fields whose single value is itself a list
 FUSION_MODELS = ("concat", "gated", "attention")
-SHORT = {"content_before": "cb", "patch_before": "pb", "patch_after": "pa", "patch": "patch",
+SHORT = {"content_before": "cb", "patch_before": "pb", "patch_after": "pa", "patch": "patch", "patch_delta": "pdelta",
          "change": "change", "repo": "repo", "message": "msg", "path": "path"}
 
 

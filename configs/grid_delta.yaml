@@ -1,0 +1,14 @@
+# Per-file embedding difference: patch_delta = CodeBERT(patch_after) - CodeBERT(patch_before),
+# computed from the stored embeddings (no new `embed` pass). Run with the main or balanced config:
+#   python -m commitclf -c configs/balanced.yaml grid --grid configs/grid_delta.yaml
+# [patch] is repeated here as the reference, so every run of the block uses the same settings.
+folds: all
+
+runs:
+  - block: delta                      # 3 inputs x 3 models = 9
+    model: [code, concat, gated]
+    split: repo
+    code:
+      - [patch]                       # reference: the git-diff text embedding alone
+      - [patch, patch_delta]          # + the before/after difference vector
+      - [patch_delta]                 # the difference vector alone
