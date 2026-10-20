@@ -1,0 +1,14 @@
+# Before/after cosine similarity of each file's CodeBERT vectors, raw and whitened, as an extra
+# per-file fact plus change-level aggregates (mean, min, churn-weighted mean). Held-out repos only.
+#   python -m commitclf -c configs/colare1793.yaml grid --grid configs/grid_colare1793_sim.yaml
+# The first entry repeats the references without similarity, so every run of the block shares settings.
+folds: all
+
+runs:
+  - block: sim                        # references: 3
+    model: [metadata, concat, gated]
+    split: repo
+  - block: sim                        # + similarity: 3 models x 2 kinds = 6
+    model: [metadata, concat, gated]
+    split: repo
+    sim: [raw, white]

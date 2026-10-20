@@ -38,7 +38,7 @@ def run_name(setting: dict) -> str:
     if "features" in setting:   # baselines
         return "_".join(p for p in (setting["features"], setting.get("split"), setting.get("subset")) if p)
     parts = [setting.get("model", "default"), setting.get("split", "")]
-    tags = {"code": "in", "metadata": "meta", "embed_pool": "emb", "file_pool": "pool", "subset": ""}
+    tags = {"code": "in", "metadata": "meta", "embed_pool": "emb", "file_pool": "pool", "subset": "", "sim": "sim"}
     for k, tag in tags.items():
         if k in setting:
             v = setting[k]

@@ -36,6 +36,8 @@ def add_experiment_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--model", choices=MODEL_TYPES)
     p.add_argument("--split", choices=SCHEMES)
     p.add_argument("--subset", choices=["single_commit"])
+    p.add_argument("--sim", choices=["raw", "white"],
+                   help="before/after cosine similarity per file (+ change aggregates); white = whitened")
     p.add_argument("--code", nargs="*", help="embedding inputs per file")
     p.add_argument("--embed-pool", choices=["mean", "cls", "pooler"])
     p.add_argument("--file-pool", choices=FILE_POOLS)
@@ -162,7 +164,8 @@ def main(argv: list[str] | None = None) -> None:
     else:
         from commitclf import train
         spec = train.make_spec(cfg, model=args.model, split=args.split, subset=args.subset, code=args.code,
-                               embed_pool=args.embed_pool, file_pool=args.file_pool, metadata=args.meta)
+                               embed_pool=args.embed_pool, file_pool=args.file_pool, metadata=args.meta,
+                               sim=args.sim)
         folds = parse_folds(args.folds, cfg, spec["split"])
         if args.command == "train":
             train.run(cfg, folds, spec, name=args.name)
