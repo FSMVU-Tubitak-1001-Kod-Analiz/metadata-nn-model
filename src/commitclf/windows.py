@@ -8,11 +8,16 @@ With `side: before` / `side: after`, each hunk is first turned into that side (c
 context + added lines, cleaned like `embed` cleans patch_before / patch_after), and the packing is
 decided on the longer side of each hunk, so the before and after windows cover the same hunks.
 
+With `mode: chunks` (whole files such as content_before / content_after, which have no hunks), the
+text is cleaned like `embed` cleans it (license header, imports, package line) and cut into
+consecutive windows of `max_length` tokens; the first `max_windows` are kept.
+
 Config (`embeddings.windows`), e.g.
     windows:
       patch_win: {model: codebert, column: patch, max_length: 512, max_windows: 8}
       patch_before_win: {model: codebert, column: patch, side: before, max_length: 512, max_windows: 8}
       patch_after_win: {model: codebert, column: patch, side: after, max_length: 512, max_windows: 8}
+      content_before_win: {model: codebert, column: content_before, mode: chunks, max_length: 512, max_windows: 8}
 
 `python -m commitclf embed-windows patch_win` writes to the embeddings dir:
     patch_win.cls.npy / patch_win.mean.npy   [n_windows, hidden] float16, windows of row 0 first, then row 1 ...
@@ -121,6 +126,30 @@ def make_windows(text: str, tokenizer, max_length: int, max_windows: int, side: 
     return _build(plan, ids, newline)[:max_windows], len(plan)
 
 
+MODES = ("hunks", "chunks")
+
+
+def chunk_windows(ids: list[int], body: int, max_windows: int) -> tuple[list[list[int]], int]:
+    """Consecutive windows of `body` token ids (the first `max_windows`), and the number before capping.
+    An empty text gives one empty window."""
+    if not ids:
+        return [[]], 1
+    n = -(-len(ids) // body)
+    return [ids[k * body:(k + 1) * body] for k in range(min(n, max_windows))], n
+
+
+def make_chunk_windows(texts: list[str], tokenizer, max_length: int, max_windows: int,
+                       clean: bool = False) -> list[tuple[list[list[int]], int]]:
+    """`chunk_windows` for a list of whole-file texts (tokenized in one batch call)."""
+    from commitclf.data.java import clean_java
+    if clean:
+        texts = [clean_java(t) for t in texts]
+    if not texts:
+        return []
+    ids = tokenizer(texts, add_special_tokens=False)["input_ids"]
+    return [chunk_windows(i, max_length - 2, max_windows) for i in ids]
+
+
 class WindowEncoder:
     def __init__(self, model_name: str, batch_size: int, device, fp16: bool):
         from transformers import AutoModel, AutoTokenizer
@@ -182,8 +211,16 @@ def run(cfg: dict, name: str, overwrite: bool = False) -> None:
     max_len = min(spec.get("max_length", 512), model_spec.get("max_length", 512))
     max_win = spec.get("max_windows", 8)
     side = spec.get("side")
-    clean = bool(side) and cfg["embeddings"].get("clean_code", True)   # as `embed` does for patch_before/after
+    mode = spec.get("mode", "hunks")
+    if mode not in MODES:
+        raise ValueError(f"windows '{name}': mode must be one of {MODES}, got '{mode}'")
+    if mode == "chunks" and side:
+        raise ValueError(f"windows '{name}': `side` only applies to mode hunks (diff text)")
+    from commitclf.embeddings import CLEANED
+    # cleaned as `embed` cleans the same text: patch sides and whole files, never the diff itself
+    clean = (bool(side) or (mode == "chunks" and spec["column"] in CLEANED)) and cfg["embeddings"].get("clean_code", True)
     print(f"Windows '{name}' over column '{spec['column']}'" + (f", {side} side" if side else "")
+          + (", consecutive chunks" if mode == "chunks" else ", hunks") + (", cleaned" if clean else "")
           + f": {max_len} tokens, at most {max_win} per file")
 
     for i, chunk in enumerate(tqdm(read_source(cfg, sorted(set(KEY_COLS) | {spec["column"]})), desc="chunks")):
@@ -194,7 +231,10 @@ def run(cfg: dict, name: str, overwrite: bool = False) -> None:
         idx = row_key(chunk).map(index)
         keep = idx.notna().to_numpy()
         texts = chunk.loc[keep, spec["column"]].fillna("").astype(str).tolist()
-        made = [make_windows(t, enc.tokenizer, max_len, max_win, side=side, clean=clean) for t in texts]
+        if mode == "chunks":
+            made = make_chunk_windows(texts, enc.tokenizer, max_len, max_win, clean=clean)
+        else:
+            made = [make_windows(t, enc.tokenizer, max_len, max_win, side=side, clean=clean) for t in texts]
         flat = [w for ws, _ in made for w in ws]
         empty = np.zeros((0, enc.model.config.hidden_size), np.float16)
         cls, mean = enc(flat) if flat else (empty, empty)
@@ -220,7 +260,8 @@ def run(cfg: dict, name: str, overwrite: bool = False) -> None:
         out.flush()
         del out
     np.save(paths["offsets"], offsets)
-    stats = {"complete": True, "n_rows": len(rows), "n_windows": int(offsets[-1]),
+    stats = {"complete": True, "column": spec["column"], "mode": mode, "side": side, "cleaned": clean,
+             "n_rows": len(rows), "n_windows": int(offsets[-1]),
              "mean_windows": float(counts.mean()), "files_capped": int((full > max_win).sum()),
              "files_multi_window": int((counts > 1).sum()), "max_length": max_len, "max_windows": max_win}
     paths["progress"].write_text(json.dumps(stats, indent=2))

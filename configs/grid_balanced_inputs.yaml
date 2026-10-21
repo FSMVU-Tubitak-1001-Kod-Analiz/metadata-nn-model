@@ -1,0 +1,74 @@
+# Input methods on the balanced data (plan of 2026-10-21): held-out repos, frozen CodeBERT, no message.
+# 58 runs x 5 folds. Code-only, concat and gated everywhere (similarity: metadata, concat, gated).
+# Needs, besides the existing balanced embeddings (content_before, patch, patch_before, patch_after):
+#   python -m commitclf -c configs/balanced.yaml embed --only content_after
+#   python -m commitclf -c configs/balanced.yaml embed-windows patch_win
+#   python -m commitclf -c configs/balanced.yaml embed-windows patch_before_win
+#   python -m commitclf -c configs/balanced.yaml embed-windows patch_after_win
+#   python -m commitclf -c configs/balanced.yaml embed-windows content_before_win
+#   python -m commitclf -c configs/balanced.yaml embed-windows content_after_win
+# Run:
+#   python -m commitclf -c configs/balanced.yaml grid --grid configs/grid_balanced_inputs.yaml
+# Blocks can be run alone with --blocks (e.g. --blocks ref delta sim only need the existing embeddings).
+# Every run sets `code` explicitly (the config default is [content_before, patch]).
+folds: all
+
+runs:
+  - block: ref                        # reference: the diff text alone, 3
+    model: [code, concat, gated]
+    split: repo
+    code: [patch]
+
+  - block: delta                      # 1. embedding difference patch_after - patch_before, 2 x 3 = 6
+    model: [code, concat, gated]
+    split: repo
+    code:
+      - [patch, patch_delta]
+      - [patch_delta]
+
+  - block: sim                        # 2. before/after cosine similarity: metadata reference, 1
+    model: metadata
+    split: repo
+  - block: sim                        #    metadata, raw / whitened, 2
+    model: metadata
+    split: repo
+    sim: [raw, white]
+  - block: sim                        #    fusions, raw / whitened, 2 x 2 = 4 (references: block ref)
+    model: [concat, gated]
+    split: repo
+    code: [patch]
+    sim: [raw, white]
+
+  - block: pwin                       # 3. windows over the diff, 2 x 3 = 6 (reference: block ref)
+    model: [code, concat, gated]
+    split: repo
+    code:
+      - [patch_winmean]               # all windows, plain mean
+      - [patch_win]                   # all windows, learned attention per file
+
+  - block: pbpa                       # 4a. before / after sides, 3 x 3 = 9
+    model: [code, concat, gated]
+    split: repo
+    code:
+      - [patch_before, patch_after]                  # each side truncated at 512 tokens (never run on our data)
+      - [patch_before_winmean, patch_after_winmean]  # aligned windows, plain mean per side
+      - [patch_before_win, patch_after_win]          # aligned windows, attention per side
+
+  - block: content                    # 4b. whole files, first 8 windows, attention, 6 x 3 = 18
+    model: [code, concat, gated]
+    split: repo
+    code:
+      - [content_before_win]
+      - [content_after_win]
+      - [content_before_win, content_after_win]
+      - [patch, content_before_win]
+      - [patch, content_after_win]
+      - [patch, content_before_win, content_after_win]
+
+  - block: combos                     # never-tried truncated combinations, 3 x 3 = 9 (pb+pa: block pbpa)
+    model: [code, concat, gated]
+    split: repo
+    code:
+      - [content_after]
+      - [patch, patch_before, patch_after]
+      - [content_before, content_after]

@@ -113,6 +113,15 @@ validates on part i+1.
 - `grid --folds 1`: a quick pass on fold 1.
 - `grid --force`: redo finished runs.
 
+### Input methods on the balanced data (`configs/grid_balanced_inputs.yaml`)
+
+58 runs × 5 folds, held-out repos, code / concat / gated: embedding difference (`patch_delta`),
+before/after similarity (`sim: raw|white`), windows over the patch, over its before/after sides and
+over the whole files (`content_before_win`, `content_after_win`: the first 8 consecutive windows of
+512 tokens of the cleaned file, `mode: chunks` in `embeddings.windows`), and the truncated inputs
+`content_after`, `content_before+content_after`, `patch+patch_before+patch_after`. The embedding
+steps it needs are listed at the top of the grid file.
+
 ## Single runs
 
 Every `experiment` field can be overridden:

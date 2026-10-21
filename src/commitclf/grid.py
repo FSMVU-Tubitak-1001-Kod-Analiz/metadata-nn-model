@@ -15,6 +15,8 @@ FUSION_MODELS = ("concat", "gated", "attention")
 SHORT = {"content_before": "cb", "patch_before": "pb", "patch_after": "pa", "patch": "patch", "patch_delta": "pdelta", "patch_win": "pwin", "patch_winmean": "pwinmean",
          "patch_before_win": "pbwin", "patch_after_win": "pawin",
          "patch_before_winmean": "pbwinmean", "patch_after_winmean": "pawinmean",
+         "content_after": "ca", "content_before_win": "cbwin", "content_after_win": "cawin",
+         "content_before_winmean": "cbwinmean", "content_after_winmean": "cawinmean",
          "change": "change", "repo": "repo", "message": "msg", "path": "path"}
 
 

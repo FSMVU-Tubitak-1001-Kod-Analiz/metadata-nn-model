@@ -42,7 +42,20 @@ embeddings:
     patch: {model: codebert, columns: [patch]}                    # full diff, - and + lines
     patch_before: {model: codebert, columns: [patch_before]}      # context + removed lines
     patch_after: {model: codebert, columns: [patch_after]}        # context + added lines
+    content_after: {model: codebert, columns: [content_after]}    # the file after the change (embed --only content_after)
     message: {model: bert, columns: [pr_title, commit_message], separator: " | "}   # LEAKS THE LABEL
+  # Windowed inputs (python -m commitclf embed-windows <name>, see src/commitclf/windows.py): one vector
+  # per window of up to max_length tokens, at most max_windows per file. As a code input: `<name>`
+  # (attention over the windows inside the model) or `<name>mean` (plain mean, precomputed).
+  windows:
+    # the diff, cut at hunk boundaries
+    patch_win: {model: codebert, column: patch, max_length: 512, max_windows: 8}
+    # before / after sides per hunk, same hunk grouping on both sides (window k covers the same hunks)
+    patch_before_win: {model: codebert, column: patch, side: before, max_length: 512, max_windows: 8}
+    patch_after_win: {model: codebert, column: patch, side: after, max_length: 512, max_windows: 8}
+    # whole files (cleaned like `embed`): the first 8 consecutive windows
+    content_before_win: {model: codebert, column: content_before, mode: chunks, max_length: 512, max_windows: 8}
+    content_after_win: {model: codebert, column: content_after, mode: chunks, max_length: 512, max_windows: 8}
 
 # Default experiment. Every field can be overridden per run (command line or configs/grid.yaml).
 experiment:
