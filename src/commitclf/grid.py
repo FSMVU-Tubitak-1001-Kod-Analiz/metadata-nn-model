@@ -17,6 +17,8 @@ SHORT = {"content_before": "cb", "patch_before": "pb", "patch_after": "pa", "pat
          "patch_before_winmean": "pbwinmean", "patch_after_winmean": "pawinmean",
          "content_after": "ca", "content_before_win": "cbwin", "content_after_win": "cawin",
          "content_before_winmean": "cbwinmean", "content_after_winmean": "cawinmean",
+         "meta_short": "txts", "meta_long": "txtl", "patch_meta_short": "patchtxts", "patch_meta_long": "patchtxtl",
+         "change_meta_short": "ctxts", "change_meta_long": "ctxtl",
          "change": "change", "repo": "repo", "message": "msg", "path": "path"}
 
 
@@ -42,7 +44,8 @@ def run_name(setting: dict) -> str:
     if "features" in setting:   # baselines
         return "_".join(p for p in (setting["features"], setting.get("split"), setting.get("subset")) if p)
     parts = [setting.get("model", "default"), setting.get("split", "")]
-    tags = {"code": "in", "metadata": "meta", "embed_pool": "emb", "file_pool": "pool", "subset": "", "sim": "sim"}
+    tags = {"code": "in", "metadata": "meta", "embed_pool": "emb", "file_pool": "pool", "subset": "", "sim": "sim",
+            "facts": "facts"}
     for k, tag in tags.items():
         if k in setting:
             v = setting[k]

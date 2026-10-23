@@ -182,13 +182,15 @@ def change_metadata(cfg: dict, units: pd.DataFrame, groups: list[str], embed_poo
             repos = sorted(load_units(cfg)["full_repo_name"].unique())
             onehot = pd.get_dummies(pd.Categorical(units["full_repo_name"], categories=repos))
             parts.append(torch.tensor(onehot.to_numpy(dtype="float32")))
-        elif g == "message":
+        elif g == "message" or g in cfg["embeddings"]["inputs"]:
+            # a change-level embedding input (same text on every file row): the change's first row
             rows = load_rows(cfg)
             first = pd.Series(np.arange(len(rows))).groupby(rows["unit_key"].to_numpy()).first()
-            msg = np.asarray(load_input(cfg, "message", "mean" if embed_pool == "pooler" else embed_pool))
-            parts.append(torch.tensor(msg[first.loc[units["unit_key"].to_numpy()].to_numpy()], dtype=torch.float32))
+            vec = load_input(cfg, g, "mean" if embed_pool == "pooler" else embed_pool)
+            parts.append(torch.tensor(np.asarray(vec[first.loc[units["unit_key"].to_numpy()].to_numpy()]),
+                                      dtype=torch.float32))
         else:
-            raise ValueError(f"Unknown metadata group '{g}' (use {CHANGE_GROUPS})")
+            raise ValueError(f"Unknown metadata group '{g}' (use {CHANGE_GROUPS} or an embedding input)")
     return torch.cat(parts, dim=1) if parts else torch.zeros(len(units), 0)
 
 

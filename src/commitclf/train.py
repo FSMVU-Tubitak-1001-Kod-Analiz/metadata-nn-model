@@ -16,7 +16,7 @@ from commitclf.metrics import classification_metrics, plot_confusion_matrices
 from commitclf.models import ChangeClassifier
 from commitclf.utils import get_device, set_seed
 
-SPEC_KEYS = ("model", "split", "subset", "code", "embed_pool", "file_pool", "metadata", "sim")
+SPEC_KEYS = ("model", "split", "subset", "code", "embed_pool", "file_pool", "metadata", "sim", "facts")
 
 
 def make_spec(cfg: dict, **overrides) -> dict:
@@ -27,13 +27,15 @@ def make_spec(cfg: dict, **overrides) -> dict:
         spec["code"] = []
     if spec["model"] == "code":
         spec["metadata"] = []
+    if spec["facts"] is None:   # per-file facts on the file vectors whenever the model uses metadata
+        spec["facts"] = True
     return spec
 
 
 def default_name(spec: dict) -> str:
     name = f"{spec['model']}_{spec['split']}"
     name += f"_{spec['subset']}" if spec["subset"] else ""
-    return name + (f"_sim-{spec['sim']}" if spec.get("sim") else "")
+    return name + (f"_sim-{spec['sim']}" if spec.get("sim") else "") + ("_nofacts" if spec.get("facts") is False else "")
 
 
 def make_model(cfg: dict, spec: dict, file_dim: int, meta_dim: int, window_dims: list[int] | None = None) -> ChangeClassifier:
@@ -179,7 +181,7 @@ def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None) -> pd.
     (run_dir / "spec.json").write_text(json.dumps(spec, indent=2))
     print(f"Run {run_dir.name}: {spec}")
 
-    table = FileTable(cfg, spec["code"], spec["embed_pool"], with_facts=spec["model"] != "code",
+    table = FileTable(cfg, spec["code"], spec["embed_pool"], with_facts=spec["model"] != "code" and spec.get("facts", True),
                       sim=spec.get("sim"), sim_dims=cfg["experiment"].get("sim_dims", 256), seed=cfg["seed"])
     rows = [{"fold": f, **train_fold(cfg, spec, f, table, run_dir)} for f in folds]
     return summarize(rows, run_dir / "summary.csv")

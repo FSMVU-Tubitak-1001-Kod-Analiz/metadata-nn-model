@@ -122,6 +122,16 @@ over the whole files (`content_before_win`, `content_after_win`: the first 8 con
 `content_after`, `content_before+content_after`, `patch+patch_before+patch_after`. The embedding
 steps it needs are listed at the top of the grid file.
 
+### Metadata as text (`configs/grid_metatext.yaml`)
+
+`metatext` writes the change and file facts as text (short key=value or long sentences, plus file
+names, changed / added / removed methods, edit actions such as added if / null checks / throws, and
+imports; no path, repo or messages) to `metatext.csv`. The same frozen CodeBERT then reads it alone
+(`meta_short`), together with the patch in one input (`patch_meta_short`), next to the patch per file
+(`code: [patch, meta_short]`), or per change as the metadata side of a fusion
+(`metadata: [change_meta_short]`, `facts: false` / `--no-facts` leaves out the numeric per-file facts).
+12 runs; the steps are listed at the top of the grid file.
+
 ## Single runs
 
 Every `experiment` field can be overridden:

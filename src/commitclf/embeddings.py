@@ -6,6 +6,10 @@ For every input in `embeddings.inputs` two arrays are written to artifacts/embed
 Row i of each array belongs to row i of rows.csv. The "pooler" pooling (what the paper used)
 is tanh(W·cls + b) with the model's pooler weights, recomputed from cls when loading.
 
+An input with `text: <column>` takes that column of metatext.csv (metadata written as text, see
+metatext.py). With `columns` as well, the two go in as one input pair, text first:
+<s> text </s></s> code </s>, truncated from the longer side.
+
 All selected inputs are filled in one pass over the source CSV. Progress is saved every
 `save_every` chunks, so running the same command again continues where it stopped.
 """
@@ -46,6 +50,15 @@ def read_progress(cfg: dict, name: str) -> dict:
     return json.loads(p.read_text()) if p.exists() else {"source_rows": 0, "written": 0, "complete": False}
 
 
+def build_input(chunk: pd.DataFrame, inp: dict, separator: str, clean: bool, metatext: pd.DataFrame | None) -> list:
+    """Texts of one input for the chunk's rows: strings, or (text, code) pairs for `text` + `columns`."""
+    code = build_texts(chunk, inp["columns"], separator, clean) if inp.get("columns") else None
+    if not inp.get("text"):
+        return code
+    meta = metatext[inp["text"]].reindex(row_key(chunk)).fillna("").tolist()
+    return meta if code is None else list(zip(meta, code))
+
+
 def build_texts(chunk: pd.DataFrame, columns: list[str], separator: str, clean: bool) -> list[str]:
     parts = []
     for col in columns:
@@ -80,12 +93,15 @@ class Encoder:
         return {"weight": pooler.dense.weight.detach().cpu().float(), "bias": pooler.dense.bias.detach().cpu().float()}
 
     @torch.no_grad()
-    def __call__(self, texts: list[str]) -> tuple[np.ndarray, np.ndarray]:
-        """Returns (cls, mean), each [len(texts), hidden] float16."""
+    def __call__(self, texts: list) -> tuple[np.ndarray, np.ndarray]:
+        """Returns (cls, mean), each [len(texts), hidden] float16. Items are strings or (first, second) pairs."""
         unique = list(dict.fromkeys(texts))   # e.g. one commit message shared by all files of a change
         cls_out, mean_out = [], []
         for start in range(0, len(unique), self.batch_size):
-            tokens = self.tokenizer(unique[start:start + self.batch_size], truncation=True, padding=True,
+            batch = unique[start:start + self.batch_size]
+            pair = isinstance(batch[0], tuple)
+            args = ([a for a, _ in batch], [b for _, b in batch]) if pair else (batch,)
+            tokens = self.tokenizer(*args, truncation="longest_first" if pair else True, padding=True,
                                     max_length=self.max_length, return_tensors="pt").to(self.device)
             with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.fp16):
                 hidden = self.model(**tokens).last_hidden_state.float()
@@ -110,6 +126,10 @@ def run(cfg: dict, only: list[str] | None = None, overwrite: bool = False) -> No
     n_rows = len(rows)
     index = pd.Series(np.arange(n_rows), index=rows["row_key"])
     emb_dir(cfg).mkdir(parents=True, exist_ok=True)
+    metatext = None
+    if any(e["inputs"][n].get("text") for n in names):
+        from commitclf.metatext import load_metatext
+        metatext = load_metatext(cfg)
     device = get_device(cfg["train"].get("device", "cuda"))
 
     # Which inputs still need work, and from which source row.
@@ -148,7 +168,7 @@ def run(cfg: dict, only: list[str] | None = None, overwrite: bool = False) -> No
                 progress[name].update(source_rows=0, written=0)
 
     start = min(progress[n]["source_rows"] for n in active)
-    source_cols = sorted({DERIVED.get(c, (c, None))[0] for n in active for c in e["inputs"][n]["columns"]}
+    source_cols = sorted({DERIVED.get(c, (c, None))[0] for n in active for c in e["inputs"][n].get("columns", [])}
                          | set(KEY_COLS))
     print(f"Embedding {active} from source row {start} (columns {source_cols})")
 
@@ -169,7 +189,7 @@ def run(cfg: dict, only: list[str] | None = None, overwrite: bool = False) -> No
             need = idx.notna() & (np.arange(pos, pos + len(chunk)) >= progress[name]["source_rows"])
             if need.any():
                 sel = chunk[need.to_numpy()]
-                texts = build_texts(sel, inp["columns"], inp.get("separator", " | "), e.get("clean_code", True))
+                texts = build_input(sel, inp, inp.get("separator", " | "), e.get("clean_code", True), metatext)
                 cls, mean = encoders[inp["model"]](texts)
                 target = idx[need].astype(int).to_numpy()
                 arrays[name, "cls"][target] = cls

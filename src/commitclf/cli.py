@@ -3,6 +3,7 @@
     convert-colare  CoLaRe's 1793 commit set -> collector-format CSV + their CV folds
     prepare     collector dataset -> data/processed/{rows,units}.csv + split files
     splits      (re)build the split files from units.csv
+    metatext    metadata written as text (short / long) per file and per change (see metatext.py)
     embed       CodeBERT / BERT vectors per file row (resumable)
     train       train/evaluate the change classifier
     finetune    same, with the message BERT and/or CodeBERT fine-tuned end to end (see finetune.py)
@@ -44,6 +45,8 @@ def add_experiment_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--meta", nargs="*", help="change-level metadata groups: change repo message")
     p.add_argument("--folds", nargs="+", default=["1"], help="fold numbers or 'all' (default: 1)")
     p.add_argument("--name", help="output folder name (default: derived from the settings)")
+    p.add_argument("--no-facts", dest="facts", action="store_false", default=None,
+                   help="no per-file facts on the file vectors (e.g. when the metadata comes as text)")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -60,6 +63,9 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("prepare", help="build rows/units tables and splits")
     sub.add_parser("splits", help="rebuild the split files")
+
+    p = sub.add_parser("metatext", help="write metadata as text (metatext.csv), needed by `text:` inputs")
+    p.add_argument("--show", type=int, default=3, help="print this many random examples")
 
     p = sub.add_parser("embed", help="compute embeddings")
     p.add_argument("--only", nargs="+", help="inputs from embeddings.inputs (default: all except message)")
@@ -132,6 +138,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "splits":
         from commitclf.data import splits
         splits.run(cfg)
+    elif args.command == "metatext":
+        from commitclf import metatext
+        metatext.run(cfg, show=args.show)
     elif args.command == "embed-windows":
         from commitclf import windows
         windows.run(cfg, args.name, overwrite=args.overwrite)
@@ -172,7 +181,7 @@ def main(argv: list[str] | None = None) -> None:
         from commitclf import train
         spec = train.make_spec(cfg, model=args.model, split=args.split, subset=args.subset, code=args.code,
                                embed_pool=args.embed_pool, file_pool=args.file_pool, metadata=args.meta,
-                               sim=args.sim)
+                               sim=args.sim, facts=args.facts)
         folds = parse_folds(args.folds, cfg, spec["split"])
         if args.command == "train":
             train.run(cfg, folds, spec, name=args.name)

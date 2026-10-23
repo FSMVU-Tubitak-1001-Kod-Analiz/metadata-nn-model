@@ -44,6 +44,14 @@ embeddings:
     patch_after: {model: codebert, columns: [patch_after]}        # context + added lines
     content_after: {model: codebert, columns: [content_after]}    # the file after the change (embed --only content_after)
     message: {model: bert, columns: [pr_title, commit_message], separator: " | "}   # LEAKS THE LABEL
+    # Metadata written as text (python -m commitclf metatext -> metatext.csv; see src/commitclf/metatext.py).
+    # `text` alone: the text is the input; `text` + `columns`: one input pair, text first, then the code.
+    meta_short: {model: codebert, text: file_short}                        # change line + file line, key=value style
+    meta_long: {model: codebert, text: file_long}                          # the same in sentences
+    patch_meta_short: {model: codebert, text: file_short, columns: [patch]}
+    patch_meta_long: {model: codebert, text: file_long, columns: [patch]}
+    change_meta_short: {model: codebert, text: change_short}               # one per change: use as metadata group
+    change_meta_long: {model: codebert, text: change_long}
   # Windowed inputs (python -m commitclf embed-windows <name>, see src/commitclf/windows.py): one vector
   # per window of up to max_length tokens, at most max_windows per file. As a code input: `<name>`
   # (attention over the windows inside the model) or `<name>mean` (plain mean, precomputed).

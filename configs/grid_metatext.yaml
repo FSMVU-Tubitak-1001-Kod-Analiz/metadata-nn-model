@@ -1,0 +1,31 @@
+# Metadata written as text, read by the same frozen CodeBERT as the code (balanced data, held-out repos).
+# 12 runs x 5 folds. References from earlier grids: code [patch] 0.574, concat 0.622, gated 0.623,
+# metadata (numbers) 0.598 (blocks ref/ and sim/ of grid_balanced_inputs.yaml).
+# Steps:
+#   python -m commitclf -c configs/balanced.yaml metatext                 # -> data/processed_balanced/metatext.csv
+#   python -m commitclf -c configs/balanced.yaml embed --only meta_short meta_long change_meta_short change_meta_long patch_meta_short patch_meta_long
+#   python -m commitclf -c configs/balanced.yaml grid --grid configs/grid_metatext.yaml
+folds: all
+
+runs:
+  - block: metatext                   # the text alone (code-only model), 2
+    model: code
+    split: repo
+    code: [[meta_short], [meta_long]]
+
+  - block: metatext                   # joint: text + patch in one CodeBERT input, 2 x 2 = 4
+    model: [code, concat]             # concat also has the numeric metadata branch
+    split: repo
+    code: [[patch_meta_short], [patch_meta_long]]
+
+  - block: metatext                   # separate per file: CodeBERT(patch) and CodeBERT(text), joined per file, 2
+    model: code
+    split: repo
+    code: [[patch, meta_short], [patch, meta_long]]
+
+  - block: metatext                   # separate, fusion: change text vector as the metadata side, 2 x 2 = 4
+    model: [concat, gated]
+    split: repo
+    code: [patch]
+    metadata: [[change_meta_short], [change_meta_long]]
+    facts: false                      # no numeric per-file facts: the metadata comes only as text

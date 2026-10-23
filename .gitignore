@@ -26,3 +26,5 @@ inputs/
 !sotas/COLARE-main/dataset/1793/dataset.csv
 
 git_push.bat
+
+Claude outputs/*
