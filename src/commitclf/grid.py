@@ -94,6 +94,7 @@ def run(cfg: dict, grid_path: str | Path, blocks: list[str] | None = None, dry_r
     print(f"{len(jobs)} runs" + (f" in blocks {blocks}" if blocks else ""))
 
     fusion = None
+    out_dirs = []
     for i, (kind, s) in enumerate(jobs, 1):
         s = dict(s)
         if s.get("model") == "best_fusion":
@@ -109,6 +110,8 @@ def run(cfg: dict, grid_path: str | Path, blocks: list[str] | None = None, dry_r
         name = run_name(s) if kind == "baselines" else f"{s['block']}/{run_name(s)}"
         base = cfg["train"]["out_dir"] if kind == "train" else cfg["baselines"]["out_dir"]
         run_dir = resolve(cfg, base) / name
+        if run_dir.parent not in out_dirs:
+            out_dirs.append(run_dir.parent)
         folds = parse_folds(folds_override or [str(grid.get("folds", "all"))], cfg, spec["split"])
 
         status = "done" if is_done(run_dir, len(folds)) and not force else "todo"
@@ -120,3 +123,14 @@ def run(cfg: dict, grid_path: str | Path, blocks: list[str] | None = None, dry_r
             train.run(cfg, folds, spec, name=name)
         else:
             baselines.run(cfg, folds, spec, features=s.get("features"), name=name)
+    if not dry_run:
+        print("Results saved in " + ", ".join(rel(cfg, d) for d in out_dirs))
+
+
+def rel(cfg: dict, path: Path) -> str:
+    """A path relative to the project root when it is inside it."""
+    root = resolve(cfg, ".")
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path)

@@ -28,3 +28,6 @@ inputs/
 git_push.bat
 
 Claude outputs/*
+
+# Run logs (nohup output)
+logs/

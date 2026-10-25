@@ -431,4 +431,7 @@ def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None, code: 
                       with_facts=spec["model"] != "code" and spec.get("facts", True))
     rows = [{"fold": f, **train_fold(cfg, spec, f, table, messages, code_texts, churn, run_dir, meta_text)}
             for f in folds]
-    return summarize(rows, run_dir / "summary.csv")
+    out = summarize(rows, run_dir / "summary.csv")
+    from commitclf.grid import rel
+    print(f"Results saved in {rel(cfg, run_dir)}")
+    return out

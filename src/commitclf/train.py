@@ -184,4 +184,7 @@ def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None) -> pd.
     table = FileTable(cfg, spec["code"], spec["embed_pool"], with_facts=spec["model"] != "code" and spec.get("facts", True),
                       sim=spec.get("sim"), sim_dims=cfg["experiment"].get("sim_dims", 256), seed=cfg["seed"])
     rows = [{"fold": f, **train_fold(cfg, spec, f, table, run_dir)} for f in folds]
-    return summarize(rows, run_dir / "summary.csv")
+    out = summarize(rows, run_dir / "summary.csv")
+    from commitclf.grid import rel
+    print(f"Results saved in {rel(cfg, run_dir)}")
+    return out
