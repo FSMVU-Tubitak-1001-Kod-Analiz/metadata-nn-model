@@ -94,6 +94,23 @@ train:
   device: cuda                            # falls back to cpu if unavailable
   out_dir: artifacts/balanced/runs
 
+# `finetune` command (src/commitclf/finetune.py): CodeBERT trained with the classifier. Used for the
+# metadata-as-text runs (finetune_metatext.sh). Always pass --no-message: the commit message leaks.
+finetune:
+  code_model: microsoft/codebert-base     # same model as `embed`; pooling follows --embed-pool (mean)
+  code_max_length: 512
+  code_lr: 2.0e-5
+  head_lr: 3.0e-5
+  batch_size: 32                          # changes per optimizer step (~550 steps per epoch)
+  micro_batch: 8                          # changes per forward pass
+  max_files: 8                            # per change, the largest by churn (frozen runs see all files)
+  grad_checkpointing: true
+  epochs: 10
+  patience: 3
+  fp16: true
+  pool: mean                              # --meta-text: pooling of the change text (as the code side)
+  meta_text_max_length: 512
+
 baselines:
   features: both                          # code | metadata | both
   knn_max_train: 30000                    # KNN is fit on a random subsample of this size

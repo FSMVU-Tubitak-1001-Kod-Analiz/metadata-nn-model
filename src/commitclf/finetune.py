@@ -34,6 +34,15 @@ The best epoch on validation macro-F1 is always the one tested, also when early 
 The message text is built like the `message` embedding input (embeddings.inputs.message:
 columns + separator) and cached in <processed_dir>/messages.csv.
 
+Metadata written as text (metatext.py):
+  - `--code` can name `text:` inputs (e.g. meta_short, or patch_meta_short = text + patch as one
+    input pair); they are read from metatext.csv and tokenized like `embed` does.
+  - `--meta-text change_short` puts a metatext column in place of the message: one text per change,
+    read by the code encoder itself (shared, like share_encoder), its vector joins the metadata side.
+    Length: meta_text_max_length (default 512). Implies no commit message.
+  - `--no-facts` (spec facts=false) leaves the numeric per-file facts out of the file vectors.
+Texts are cut at code_max_length x 16 characters when loaded (only the first 512 tokens are read).
+
 The best model of each fold is kept in memory only (a BERT checkpoint per fold is ~0.5 GB).
 Predictions and metrics are written the same way `train` writes them.
 """
@@ -50,7 +59,7 @@ from tqdm import tqdm
 
 from commitclf.config import resolve
 from commitclf.data.prepare import KEY_COLS, load_rows, processed_path, read_source, row_key, unit_key
-from commitclf.embeddings import DERIVED, build_texts
+from commitclf.embeddings import DERIVED, build_input, build_texts
 from commitclf.features import ChangeSet, FileTable, build_sets, collate
 from commitclf.metrics import classification_metrics, plot_confusion_matrices
 from commitclf.train import class_weights, make_model, summarize
@@ -61,7 +70,8 @@ DEFAULTS = {"model": "bert-base-uncased", "max_length": 128, "pool": "cls", "enc
             "max_files": 8, "micro_batch": 8, "grad_checkpointing": True,
             "epochs": 30, "patience": 6, "fp16": True,
             "share_encoder": False, "layer_lrs": None, "encoder_weight_decay": 0.01,
-            "lr_schedule": "plateau", "clip_grad": 1.0, "class_weights": None, "tag": None}
+            "lr_schedule": "plateau", "clip_grad": 1.0, "class_weights": None, "tag": None,
+            "meta_text_max_length": 512}
 MAX_CODE_ROWS = 200_000
 
 
@@ -109,8 +119,16 @@ def load_messages(cfg: dict) -> pd.Series:
     return msgs.set_index("unit_key")["text"]
 
 
-def load_code_texts(cfg: dict, inputs: list[str]) -> dict[str, list[str]]:
-    """input name -> one text per row of rows.csv, preprocessed as `embed` does."""
+def load_meta_texts(cfg: dict, column: str) -> pd.Series:
+    """unit_key -> one metatext column (the change-level texts are the same on every row of a change)."""
+    from commitclf.metatext import load_metatext
+    rows = load_rows(cfg)
+    text = load_metatext(cfg)[column].reindex(rows["row_key"]).fillna("").to_numpy()
+    return pd.Series(text, index=rows["unit_key"].to_numpy()).groupby(level=0).first()
+
+
+def load_code_texts(cfg: dict, inputs: list[str], max_chars: int = 8192) -> dict[str, list]:
+    """input name -> one text (or (text, code) pair) per row of rows.csv, preprocessed as `embed` does."""
     rows = load_rows(cfg)
     if len(rows) > MAX_CODE_ROWS:
         raise ValueError(f"{len(rows)} file rows: code fine-tuning keeps all texts in memory and is meant "
@@ -118,7 +136,12 @@ def load_code_texts(cfg: dict, inputs: list[str]) -> dict[str, list[str]]:
     index = pd.Series(np.arange(len(rows)), index=rows["row_key"])
     e = cfg["embeddings"]
     specs = {name: e["inputs"][name] for name in inputs}
-    src_cols = sorted({DERIVED.get(c, (c, None))[0] for s in specs.values() for c in s["columns"]} | set(KEY_COLS))
+    src_cols = sorted({DERIVED.get(c, (c, None))[0] for s in specs.values() for c in s.get("columns", [])} | set(KEY_COLS))
+    metatext = None
+    if any(s.get("text") for s in specs.values()):
+        from commitclf.metatext import load_metatext
+        metatext = load_metatext(cfg)
+    cut = lambda t: tuple(x[:max_chars] for x in t) if isinstance(t, tuple) else t[:max_chars]
     out = {name: [""] * len(rows) for name in inputs}
     for chunk in tqdm(read_source(cfg, src_cols), desc="Reading code", unit="chunk"):
         chunk = chunk.reset_index(drop=True)
@@ -128,9 +151,9 @@ def load_code_texts(cfg: dict, inputs: list[str]) -> dict[str, list[str]]:
             continue
         sel, pos = chunk[keep], idx[keep].astype(int).to_numpy()
         for name, s in specs.items():
-            texts = build_texts(sel, s["columns"], s.get("separator", " | "), e.get("clean_code", True))
+            texts = build_input(sel, s, s.get("separator", " | "), e.get("clean_code", True), metatext)
             for p, t in zip(pos, texts):
-                out[name][p] = t
+                out[name][p] = cut(t)
     return out
 
 
@@ -213,7 +236,10 @@ class Batcher:
                 rows = torch.cat([self.cs.rows[a:b] for a, b in zip(starts.tolist(), ends.tolist())]).tolist()
                 extra["code"] = []
                 for texts in self.code_texts.values():
-                    tok = self.code_tokenizer([texts[r] for r in rows], truncation=True, padding=True,
+                    batch = [texts[r] for r in rows]
+                    pair = isinstance(batch[0], tuple)   # (metadata text, code): one input pair
+                    args = ([a for a, _ in batch], [b for _, b in batch]) if pair else (batch,)
+                    tok = self.code_tokenizer(*args, truncation="longest_first" if pair else True, padding=True,
                                               max_length=self.code_max_length, return_tensors="pt")
                     extra["code"].append((tok["input_ids"], tok["attention_mask"]))
             yield files, mask, meta, y, extra
@@ -241,7 +267,7 @@ def predict(model, batcher: Batcher, device, batch_size) -> tuple[np.ndarray, np
 
 
 def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.Series | None,
-               code_texts: dict | None, churn: np.ndarray | None, run_dir: Path) -> dict:
+               code_texts: dict | None, churn: np.ndarray | None, run_dir: Path, meta_text: str | None = None) -> dict:
     from transformers import AutoModel, AutoTokenizer
     from transformers import logging as hf_logging
     hf_logging.set_verbosity_error()
@@ -252,7 +278,8 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
     fp16 = bool(ft["fp16"]) and device.type == "cuda"
     sets = build_sets(cfg, spec, fold, table)
 
-    share = bool(ft["share_encoder"]) and code_texts is not None and messages is not None
+    share = (bool(ft["share_encoder"]) or meta_text is not None) and code_texts is not None and messages is not None
+    msg_len = ft["meta_text_max_length"] if meta_text else ft["max_length"]
     code_encoder, code_tokenizer = None, None
     if code_texts is not None:
         code_tokenizer = AutoTokenizer.from_pretrained(ft["code_model"])
@@ -265,7 +292,7 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
         tokenizer = code_tokenizer if share else AutoTokenizer.from_pretrained(ft["model"])
         for p, cs in sets.items():
             texts = messages.reindex(cs.units["unit_key"]).fillna("").astype(str).tolist()
-            msg_tokens[p] = tokenizer(texts, truncation=True, padding="max_length", max_length=ft["max_length"],
+            msg_tokens[p] = tokenizer(texts, truncation=True, padding="max_length", max_length=msg_len,
                                       return_tensors="pt")
         msg_encoder = code_encoder if share else AutoModel.from_pretrained(ft["model"])
     batchers = {p: Batcher(table, cs, msg_tokens[p], code_texts, code_tokenizer, ft["code_max_length"], churn,
@@ -278,7 +305,8 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
     print(f"Fold {fold}: " + ", ".join(f"{p}={len(s)}" for p, s in sets.items())
           + f" | file dim {file_dim}, metadata dim {meta_dim}"
           + (f" | code: {ft['code_model']} on {list(code_texts)}, <= {ft['max_files']} files" if code_texts else "")
-          + (f" | message: {ft['code_model'] + ' (shared)' if share else ft['model']}" if messages is not None else ""))
+          + (f" | {'metatext ' + meta_text if meta_text else 'message'}: "
+             f"{ft['code_model'] + ' (shared)' if share else ft['model']}" if messages is not None else ""))
 
     weight = class_weights(sets["train"].y, len(labels)).to(device) if ft["class_weights"] else None
     criterion = nn.CrossEntropyLoss(weight=weight)
@@ -367,7 +395,14 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
 
 
 def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None, code: bool = False,
-        message: bool = True) -> pd.DataFrame:
+        message: bool = True, meta_text: str | None = None) -> pd.DataFrame:
+    if meta_text:
+        from commitclf.metatext import TEXT_COLUMNS
+        if meta_text not in TEXT_COLUMNS:
+            raise ValueError(f"--meta-text must be one of {TEXT_COLUMNS}")
+        if not code:
+            raise ValueError("--meta-text is read by the fine-tuned code encoder; add --code-ft")
+        message = True   # the metatext takes the message's place (no commit message is used)
     if not (code or message):
         raise ValueError("Nothing to fine-tune: use the message (default) and/or --code-ft")
     if message and spec["model"] == "code":
@@ -379,17 +414,21 @@ def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None, code: 
     ft = settings(cfg)
     if ft["lr_schedule"] not in ("plateau", "none"):
         raise ValueError("finetune.lr_schedule must be plateau or none")
-    tags = (["code-ft"] if code else []) + (["msg-ft"] if message else []) + ([ft["tag"]] if ft["tag"] else [])
+    tags = (["code-ft"] if code else []) + ([f"text-{meta_text}"] if meta_text else ["msg-ft"] if message else []) \
+        + ([ft["tag"]] if ft["tag"] else [])
     default = f"{spec['model']}_{spec['split']}" + (f"_{spec['subset']}" if spec["subset"] else "") + "_" + "_".join(tags)
     run_dir = resolve(cfg, cfg["train"]["out_dir"]) / (name or f"finetune/{default}")
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "spec.json").write_text(json.dumps({**spec, "finetune": {**ft, "code": code, "message": message}},
-                                                  indent=2))
-    print(f"Run {run_dir.name}: {spec} | finetune code={code} message={message} {ft}")
+    (run_dir / "spec.json").write_text(json.dumps({**spec, "finetune": {**ft, "code": code, "message": message,
+                                                                        "meta_text": meta_text}}, indent=2))
+    print(f"Run {run_dir.name}: {spec} | finetune code={code} message={message} meta_text={meta_text} {ft}")
 
-    messages = load_messages(cfg) if message else None
-    code_texts, churn = (load_code_texts(cfg, spec["code"]), file_churn(cfg)) if code else (None, None)
+    messages = load_meta_texts(cfg, meta_text) if meta_text else load_messages(cfg) if message else None
+    code_texts, churn = (load_code_texts(cfg, spec["code"], max_chars=16 * ft["code_max_length"]), file_churn(cfg)) \
+        if code else (None, None)
     # Frozen file vectors only when the code isn't fine-tuned; per-file facts whenever metadata is used.
-    table = FileTable(cfg, [] if code else spec["code"], spec["embed_pool"], with_facts=spec["model"] != "code")
-    rows = [{"fold": f, **train_fold(cfg, spec, f, table, messages, code_texts, churn, run_dir)} for f in folds]
+    table = FileTable(cfg, [] if code else spec["code"], spec["embed_pool"],
+                      with_facts=spec["model"] != "code" and spec.get("facts", True))
+    rows = [{"fold": f, **train_fold(cfg, spec, f, table, messages, code_texts, churn, run_dir, meta_text)}
+            for f in folds]
     return summarize(rows, run_dir / "summary.csv")
