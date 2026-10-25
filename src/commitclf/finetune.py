@@ -43,6 +43,14 @@ Metadata written as text (metatext.py):
   - `--no-facts` (spec facts=false) leaves the numeric per-file facts out of the file vectors.
 Texts are cut at code_max_length x 16 characters when loaded (only the first 512 tokens are read).
 
+Cross-attention between token sequences (`--coattn`, with `--model code --code patch --meta-text ...`):
+CodeBERT's token outputs are kept instead of pooled vectors. The metadata-text tokens attend to the
+tokens of all the change's patches and the patch tokens attend to the text tokens (one co-attention
+layer, as in ViLBERT / LXMERT: projection to coattn_dim, multi-head attention both ways, residual +
+LayerNorm, feed-forward); each side is pooled by attention and the two vectors go to the classifier.
+`freeze_code: true` (or `--freeze-code`) keeps CodeBERT frozen: only the co-attention and the
+classifier are trained (no gradients through CodeBERT, so much faster).
+
 The best model of each fold is kept in memory only (a BERT checkpoint per fold is ~0.5 GB).
 Predictions and metrics are written the same way `train` writes them.
 """
@@ -71,7 +79,7 @@ DEFAULTS = {"model": "bert-base-uncased", "max_length": 128, "pool": "cls", "enc
             "epochs": 30, "patience": 6, "fp16": True,
             "share_encoder": False, "layer_lrs": None, "encoder_weight_decay": 0.01,
             "lr_schedule": "plateau", "clip_grad": 1.0, "class_weights": None, "tag": None,
-            "meta_text_max_length": 512}
+            "meta_text_max_length": 512, "freeze_code": False, "coattn_dim": 256, "coattn_heads": 4}
 MAX_CODE_ROWS = 200_000
 
 
@@ -172,22 +180,80 @@ def pool_hidden(out, attn: torch.Tensor, pool: str) -> torch.Tensor:
     return (h * m).sum(1) / m.sum(1).clamp(min=1)
 
 
+class AttnPool(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.score = nn.Linear(dim, 1)
+
+    def forward(self, h: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        w = torch.softmax(self.score(h).squeeze(-1).masked_fill(~mask, float("-inf")), dim=1)
+        return (w.unsqueeze(-1) * h).sum(1)
+
+
+class CoAttention(nn.Module):
+    """One co-attention layer between code tokens and metadata-text tokens -> [pooled code; pooled text]."""
+
+    def __init__(self, hidden: int, dim: int = 256, heads: int = 4, dropout: float = 0.1):
+        super().__init__()
+        self.pc = nn.Sequential(nn.Linear(hidden, dim), nn.LayerNorm(dim))
+        self.pm = nn.Sequential(nn.Linear(hidden, dim), nn.LayerNorm(dim))
+        self.c2m = nn.MultiheadAttention(dim, heads, dropout=dropout, batch_first=True)   # code queries text
+        self.m2c = nn.MultiheadAttention(dim, heads, dropout=dropout, batch_first=True)   # text queries code
+        ff = lambda: nn.Sequential(nn.Linear(dim, 2 * dim), nn.GELU(), nn.Dropout(dropout), nn.Linear(2 * dim, dim))
+        self.ff_c, self.ff_m = ff(), ff()
+        self.ln = nn.ModuleList([nn.LayerNorm(dim) for _ in range(4)])
+        self.pool_c, self.pool_m = AttnPool(dim), AttnPool(dim)
+        self.out_dim = 2 * dim
+
+    def forward(self, c, c_mask, m, m_mask):
+        c, m = self.pc(c), self.pm(m)
+        c2 = self.ln[0](c + self.c2m(c, m, m, key_padding_mask=~m_mask, need_weights=False)[0])
+        m2 = self.ln[1](m + self.m2c(m, c, c, key_padding_mask=~c_mask, need_weights=False)[0])
+        c2, m2 = self.ln[2](c2 + self.ff_c(c2)), self.ln[3](m2 + self.ff_m(m2))
+        return torch.cat((self.pool_c(c2, c_mask), self.pool_m(m2, m_mask)), dim=1)
+
+
 class FinetuneModel(nn.Module):
     """ChangeClassifier with optional trained encoders for the message and the files' code."""
 
     def __init__(self, base: nn.Module, msg_encoder: nn.Module | None, msg_pool: str,
-                 code_encoder: nn.Module | None, code_pool: str, n_code_inputs: int, fp16: bool):
+                 code_encoder: nn.Module | None, code_pool: str, n_code_inputs: int, fp16: bool,
+                 coattn: nn.Module | None = None, freeze_code: bool = False):
         super().__init__()
         self.base, self.msg_encoder, self.code_encoder = base, msg_encoder, code_encoder
         self.msg_pool, self.code_pool, self.n_code_inputs, self.fp16 = msg_pool, code_pool, n_code_inputs, fp16
+        self.coattn, self.freeze_code = coattn, freeze_code
+        if freeze_code and code_encoder is not None:
+            code_encoder.requires_grad_(False)
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.freeze_code and self.code_encoder is not None:
+            self.code_encoder.eval()   # no dropout in a frozen encoder
+        return self
+
+    def _hidden(self, encoder, ids, attn):
+        # Mixed precision only inside the transformers; the classifier (BatchNorm, index_put) stays float32.
+        frozen = self.freeze_code and encoder is self.code_encoder
+        with torch.set_grad_enabled(torch.is_grad_enabled() and not frozen):
+            with torch.autocast(device_type=ids.device.type, dtype=torch.float16, enabled=self.fp16):
+                return encoder(input_ids=ids, attention_mask=attn)
 
     def _encode(self, encoder, ids, attn, pool):
-        # Mixed precision only inside the transformers; the classifier (BatchNorm, index_put) stays float32.
-        with torch.autocast(device_type=ids.device.type, dtype=torch.float16, enabled=self.fp16):
-            out = encoder(input_ids=ids, attention_mask=attn)
-        return pool_hidden(out, attn, pool)
+        return pool_hidden(self._hidden(encoder, ids, attn), attn, pool)
 
     def forward(self, files, mask, meta, msg=None, code=None):
+        if self.coattn is not None:
+            # token outputs: all patch tokens of a change [B, F*L, H] and its metadata-text tokens [B, Lm, H]
+            ids, attn = code[0]
+            h = self._hidden(self.code_encoder, ids, attn).last_hidden_state.float()
+            b, f = mask.shape
+            tok = torch.zeros(b, f, h.shape[1], h.shape[2], device=h.device)
+            tok_mask = torch.zeros(b, f, h.shape[1], dtype=torch.bool, device=h.device)
+            tok[mask], tok_mask[mask] = h, attn.bool()
+            m = self._hidden(self.msg_encoder, *msg).last_hidden_state.float()
+            v = self.coattn(tok.view(b, f * h.shape[1], -1), tok_mask.view(b, -1), m, msg[1].bool())
+            return self.base(v.unsqueeze(1), torch.ones(b, 1, dtype=torch.bool, device=v.device), meta)
         if self.code_encoder is not None:
             # code: list (one per input) of (ids, attn) for the real files, in mask order
             vecs = [self._encode(self.code_encoder, ids, attn, self.code_pool) for ids, attn in code]
@@ -267,7 +333,8 @@ def predict(model, batcher: Batcher, device, batch_size) -> tuple[np.ndarray, np
 
 
 def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.Series | None,
-               code_texts: dict | None, churn: np.ndarray | None, run_dir: Path, meta_text: str | None = None) -> dict:
+               code_texts: dict | None, churn: np.ndarray | None, run_dir: Path, meta_text: str | None = None,
+               coattn: bool = False) -> dict:
     from transformers import AutoModel, AutoTokenizer
     from transformers import logging as hf_logging
     hf_logging.set_verbosity_error()
@@ -284,7 +351,7 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
     if code_texts is not None:
         code_tokenizer = AutoTokenizer.from_pretrained(ft["code_model"])
         code_encoder = AutoModel.from_pretrained(ft["code_model"])
-        if ft["grad_checkpointing"]:
+        if ft["grad_checkpointing"] and not ft["freeze_code"]:
             code_encoder.gradient_checkpointing_enable()
 
     msg_encoder, msg_tokens = None, {p: None for p in sets}
@@ -298,22 +365,29 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
     batchers = {p: Batcher(table, cs, msg_tokens[p], code_texts, code_tokenizer, ft["code_max_length"], churn,
                            ft["max_files"]) for p, cs in sets.items()}
 
-    file_dim = table.dim + (len(code_texts) * code_encoder.config.hidden_size if code_encoder is not None else 0)
-    meta_dim = sets["train"].meta.shape[1] + (msg_encoder.config.hidden_size if msg_encoder is not None else 0)
+    co = CoAttention(code_encoder.config.hidden_size, ft["coattn_dim"], ft["coattn_heads"]) if coattn else None
+    if coattn:   # the co-attention vector is the only "file"; the classifier is the code model on it
+        file_dim, meta_dim = co.out_dim, 0
+    else:
+        file_dim = table.dim + (len(code_texts) * code_encoder.config.hidden_size if code_encoder is not None else 0)
+        meta_dim = sets["train"].meta.shape[1] + (msg_encoder.config.hidden_size if msg_encoder is not None else 0)
     model = FinetuneModel(make_model(cfg, spec, file_dim, meta_dim), msg_encoder, ft["pool"], code_encoder,
-                          spec["embed_pool"], len(code_texts or {}), fp16).to(device)
+                          spec["embed_pool"], len(code_texts or {}), fp16, coattn=co,
+                          freeze_code=bool(ft["freeze_code"])).to(device)
     print(f"Fold {fold}: " + ", ".join(f"{p}={len(s)}" for p, s in sets.items())
           + f" | file dim {file_dim}, metadata dim {meta_dim}"
           + (f" | code: {ft['code_model']} on {list(code_texts)}, <= {ft['max_files']} files" if code_texts else "")
           + (f" | {'metatext ' + meta_text if meta_text else 'message'}: "
-             f"{ft['code_model'] + ' (shared)' if share else ft['model']}" if messages is not None else ""))
+             f"{ft['code_model'] + ' (shared)' if share else ft['model']}" if messages is not None else "")
+          + (" | co-attention" if coattn else "") + (" | CodeBERT frozen" if ft["freeze_code"] else ""))
 
     weight = class_weights(sets["train"].y, len(labels)).to(device) if ft["class_weights"] else None
     criterion = nn.CrossEntropyLoss(weight=weight)
-    groups = [{"params": model.base.parameters(), "lr": ft["head_lr"], "weight_decay": ft["head_weight_decay"]}]
+    head = list(model.base.parameters()) + (list(model.coattn.parameters()) if coattn else [])
+    groups = [{"params": head, "lr": ft["head_lr"], "weight_decay": ft["head_weight_decay"]}]
     if msg_encoder is not None and not share:
         groups += encoder_groups(model.msg_encoder, ft["encoder_lr"], ft["layer_lrs"], ft["encoder_weight_decay"])
-    if code_encoder is not None:
+    if code_encoder is not None and not ft["freeze_code"]:
         groups += encoder_groups(model.code_encoder, ft["code_lr"], ft["layer_lrs"], ft["encoder_weight_decay"])
     optimizer = torch.optim.AdamW(groups)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -338,7 +412,7 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
         for files, mask, meta, y, extra in batchers["train"].batches(micro, shuffle=True, generator=generator):
             y = y.to(device)
             logits = model(files.to(device), mask.to(device), meta.to(device), **to_device(extra, device))
-            loss = criterion(logits, y)
+            loss = model.base.loss(logits, y, criterion)
             scaler.scale(loss / accum).backward()
             step += 1
             if step % accum == 0:
@@ -395,7 +469,12 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, messages: pd.
 
 
 def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None, code: bool = False,
-        message: bool = True, meta_text: str | None = None) -> pd.DataFrame:
+        message: bool = True, meta_text: str | None = None, coattn: bool = False,
+        freeze_code: bool = False) -> pd.DataFrame:
+    if freeze_code:
+        cfg = {**cfg, "finetune": {**(cfg.get("finetune") or {}), "freeze_code": True}}
+    if coattn and not (code and meta_text and spec["model"] == "code" and len(spec["code"]) == 1):
+        raise ValueError("--coattn needs --code-ft, --meta-text, --model code and one code input (e.g. --code patch)")
     if meta_text:
         from commitclf.metatext import TEXT_COLUMNS
         if meta_text not in TEXT_COLUMNS:
@@ -405,7 +484,7 @@ def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None, code: 
         message = True   # the metatext takes the message's place (no commit message is used)
     if not (code or message):
         raise ValueError("Nothing to fine-tune: use the message (default) and/or --code-ft")
-    if message and spec["model"] == "code":
+    if message and spec["model"] == "code" and not coattn:
         raise ValueError("The message joins the metadata side; use metadata, concat, gated or attention, "
                          "or --no-message")
     if code and not spec["code"]:
@@ -414,13 +493,15 @@ def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None, code: 
     ft = settings(cfg)
     if ft["lr_schedule"] not in ("plateau", "none"):
         raise ValueError("finetune.lr_schedule must be plateau or none")
-    tags = (["code-ft"] if code else []) + ([f"text-{meta_text}"] if meta_text else ["msg-ft"] if message else []) \
+    tags = (["code-frozen" if ft["freeze_code"] else "code-ft"] if code else []) + (["coattn"] if coattn else []) \
+        + ([f"text-{meta_text}"] if meta_text else ["msg-ft"] if message else []) \
         + ([ft["tag"]] if ft["tag"] else [])
     default = f"{spec['model']}_{spec['split']}" + (f"_{spec['subset']}" if spec["subset"] else "") + "_" + "_".join(tags)
     run_dir = resolve(cfg, cfg["train"]["out_dir"]) / (name or f"finetune/{default}")
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "spec.json").write_text(json.dumps({**spec, "finetune": {**ft, "code": code, "message": message,
-                                                                        "meta_text": meta_text}}, indent=2))
+                                                                        "meta_text": meta_text, "coattn": coattn}},
+                                                  indent=2))
     print(f"Run {run_dir.name}: {spec} | finetune code={code} message={message} meta_text={meta_text} {ft}")
 
     messages = load_meta_texts(cfg, meta_text) if meta_text else load_messages(cfg) if message else None
@@ -429,7 +510,7 @@ def run(cfg: dict, folds: list[int], spec: dict, name: str | None = None, code: 
     # Frozen file vectors only when the code isn't fine-tuned; per-file facts whenever metadata is used.
     table = FileTable(cfg, [] if code else spec["code"], spec["embed_pool"],
                       with_facts=spec["model"] != "code" and spec.get("facts", True))
-    rows = [{"fold": f, **train_fold(cfg, spec, f, table, messages, code_texts, churn, run_dir, meta_text)}
+    rows = [{"fold": f, **train_fold(cfg, spec, f, table, messages, code_texts, churn, run_dir, meta_text, coattn)}
             for f in folds]
     out = summarize(rows, run_dir / "summary.csv")
     from commitclf.grid import rel

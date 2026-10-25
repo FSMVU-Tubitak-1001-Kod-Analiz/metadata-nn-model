@@ -82,6 +82,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--no-message", action="store_true", help="don't use the message (code fine-tuning only)")
     p.add_argument("--meta-text", metavar="COLUMN",
                    help="a metatext.csv column (e.g. change_short) instead of the message, read by the code encoder")
+    p.add_argument("--coattn", action="store_true",
+                   help="cross-attention between the code tokens and the --meta-text tokens (see finetune.py)")
+    p.add_argument("--freeze-code", action="store_true", help="keep CodeBERT frozen (train only the layers on top)")
     add_experiment_args(p)
 
     p = sub.add_parser("colare", help="run CoLaRe's model (sotas/COLARE-main) on our folds")
@@ -190,7 +193,7 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "finetune":
             from commitclf import finetune
             finetune.run(cfg, folds, spec, name=args.name, code=args.code_ft, message=not args.no_message,
-                         meta_text=args.meta_text)
+                         meta_text=args.meta_text, coattn=args.coattn, freeze_code=args.freeze_code)
         else:
             from commitclf import baselines
             baselines.run(cfg, folds, spec, features=args.features, only=args.models, name=args.name)

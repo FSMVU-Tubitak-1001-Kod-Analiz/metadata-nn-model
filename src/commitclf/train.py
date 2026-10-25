@@ -71,13 +71,13 @@ def train_epoch(model, table, cs, criterion, optimizer, device, batch_size, gene
         files, mask, meta, y, windows = unpack(batch, device)
         optimizer.zero_grad()
         logits = model(files, mask, meta, windows)
-        loss = criterion(logits, y)
+        loss = model.loss(logits, y, criterion)
         loss.backward()
         optimizer.step()
         total += loss.item() * len(y)
         correct += (logits.argmax(1) == y).sum().item()
         seen += len(y)
-        if model.fusion is not None:
+        if getattr(model.fusion, "last_weight", None) is not None:
             fusion_w.append(model.fusion.last_weight)
     out = {"loss": total / seen, "accuracy": correct / seen}
     if fusion_w:
@@ -101,6 +101,26 @@ def predict(model, table, cs, criterion, device, batch_size) -> tuple[float, np.
 def evaluate(model, table, cs, criterion, device, batch_size, labels) -> tuple[dict, np.ndarray, np.ndarray]:
     loss, y_true, proba = predict(model, table, cs, criterion, device, batch_size)
     return {"loss": loss, **classification_metrics(y_true, proba.argmax(1), proba, labels)}, y_true, proba
+
+
+def clip_pretrain(model, table, cs, device, batch_size, generator, weight_decay: float) -> list[float]:
+    """gated_clip: contrastive pre-training of both sides (models.CLIP_EPOCHS epochs at models.CLIP_LR)."""
+    from commitclf.models import CLIP_EPOCHS, CLIP_LR
+    optimizer = torch.optim.Adam(model.parameters(), lr=CLIP_LR, weight_decay=weight_decay)
+    losses = []
+    for epoch in range(1, CLIP_EPOCHS + 1):
+        model.train()
+        total, n = 0.0, 0
+        for batch in batches(table, cs, batch_size, shuffle=True, generator=generator):
+            files, mask, meta, y, windows = unpack(batch, device)
+            optimizer.zero_grad()
+            loss = model.clip_loss(files, mask, meta, windows)
+            loss.backward()
+            optimizer.step()
+            total, n = total + loss.item() * len(y), n + len(y)
+        losses.append(total / n)
+        tqdm.write(f"[clip {epoch:2d}] contrastive loss={total / n:.4f}")
+    return losses
 
 
 def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, run_dir: Path) -> dict:
@@ -127,6 +147,9 @@ def train_fold(cfg: dict, spec: dict, fold: int, table: FileTable, run_dir: Path
     bs = t["batch_size"]
 
     best_f1, best_epoch, history = -1.0, 0, []
+    if model.clip is not None:
+        clip = clip_pretrain(model, table, sets["train"], device, bs, generator, t.get("weight_decay", 0.0))
+        pd.DataFrame({"epoch": range(1, len(clip) + 1), "clip_loss": clip}).to_csv(fold_dir / "clip_history.csv", index=False)
     bar = tqdm(range(1, t["epochs"] + 1), desc=f"{run_dir.name} fold {fold}")
     for epoch in bar:
         tr = train_epoch(model, table, sets["train"], criterion, optimizer, device, bs, generator)
